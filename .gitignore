@@ -1,4 +1,5 @@
 .secureskills/
+.agents/
 node_modules/
 coverage/
 *.log
