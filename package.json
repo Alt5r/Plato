@@ -1,0 +1,12 @@
+{
+  "name": "secureskills-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "cli": "node --experimental-strip-types packages/secureskills-cli/src/bin.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  }
+}

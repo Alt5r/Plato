@@ -1,0 +1,4 @@
+.secureskills/
+node_modules/
+coverage/
+*.log

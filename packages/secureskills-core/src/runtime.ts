@@ -1,0 +1,155 @@
+import { spawn } from "node:child_process";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { PAYLOAD_DIR } from "./constants.ts";
+import { loadProject } from "./config.ts";
+import { decryptBytes, unwrapContentKey } from "./crypto.ts";
+import { ensureDir, pathExists, removeIfExists, symlinkAbsoluteTarget } from "./fs-utils.ts";
+import { verifyProject } from "./verify.ts";
+import type { BundleManifest, VerifiedWorkspace } from "./types.ts";
+
+export async function createVerifiedWorkspace(projectRoot: string): Promise<VerifiedWorkspace> {
+  const report = await verifyProject(projectRoot);
+  const failedBundles = report.bundles.filter((bundle) => !bundle.ok);
+  if (failedBundles.length > 0) {
+    const names = failedBundles.map((bundle) => bundle.skillName).join(", ");
+    throw new Error(`Refusing to materialize runtime because verification failed for: ${names}`);
+  }
+
+  const project = await loadProject(projectRoot);
+  const workspaceDir = await mkdtemp(path.join(tmpdir(), "secureskills-workspace-"));
+  const secureSkillsDir = path.join(workspaceDir, ".secureskills");
+  const runtimeSkillsDir = path.join(secureSkillsDir, "runtime", "skills");
+
+  await linkWorkspaceEntries(projectRoot, workspaceDir);
+  await ensureDir(secureSkillsDir);
+  await linkSecureskillsMetadata(projectRoot, secureSkillsDir);
+  await ensureDir(runtimeSkillsDir);
+
+  for (const bundle of report.bundles) {
+    await materializeBundle(project, bundle.manifest!, runtimeSkillsDir);
+  }
+
+  await prepareAgentMounts(projectRoot, workspaceDir, runtimeSkillsDir);
+
+  return {
+    workspaceDir,
+    runtimeSkillsDir,
+    cleanup: async () => {
+      await removeIfExists(workspaceDir);
+    },
+  };
+}
+
+export async function runAgentCommand(projectRoot: string, command: string[]): Promise<number> {
+  if (command.length === 0) {
+    throw new Error("Missing command after --");
+  }
+
+  const workspace = await createVerifiedWorkspace(projectRoot);
+  try {
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const child = spawn(command[0], command.slice(1), {
+        cwd: workspace.workspaceDir,
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          SECURESKILLS_RUNTIME_DIR: workspace.runtimeSkillsDir,
+          SECURESKILLS_WORKSPACE_DIR: workspace.workspaceDir,
+          SECURESKILLS_ORIGINAL_CWD: projectRoot,
+        },
+      });
+
+      child.on("error", reject);
+      child.on("exit", (code) => {
+        resolve(code ?? 1);
+      });
+    });
+
+    return exitCode;
+  } finally {
+    await workspace.cleanup();
+  }
+}
+
+async function linkWorkspaceEntries(projectRoot: string, workspaceDir: string): Promise<void> {
+  const entries = await readdir(projectRoot, { withFileTypes: true });
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+
+  for (const entry of entries) {
+    if (entry.name === ".agents" || entry.name === ".secureskills" || entry.name === "skills") {
+      continue;
+    }
+
+    await symlinkAbsoluteTarget(path.join(projectRoot, entry.name), path.join(workspaceDir, entry.name));
+  }
+}
+
+async function linkSecureskillsMetadata(projectRoot: string, workspaceSecureSkillsDir: string): Promise<void> {
+  const originalSecureSkillsDir = path.join(projectRoot, ".secureskills");
+  if (!(await pathExists(originalSecureSkillsDir))) {
+    return;
+  }
+
+  for (const entryName of ["config.json", "keys", "lock.json", "store"]) {
+    const sourcePath = path.join(originalSecureSkillsDir, entryName);
+    if (await pathExists(sourcePath)) {
+      await symlinkAbsoluteTarget(sourcePath, path.join(workspaceSecureSkillsDir, entryName));
+    }
+  }
+}
+
+async function prepareAgentMounts(
+  projectRoot: string,
+  workspaceDir: string,
+  runtimeSkillsDir: string,
+): Promise<void> {
+  const workspaceAgentsDir = path.join(workspaceDir, ".agents");
+  await ensureDir(workspaceAgentsDir);
+
+  const originalAgentsDir = path.join(projectRoot, ".agents");
+  if (await pathExists(originalAgentsDir)) {
+    const agentEntries = await readdir(originalAgentsDir, { withFileTypes: true });
+    agentEntries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of agentEntries) {
+      if (entry.name === "skills") {
+        continue;
+      }
+      await symlinkAbsoluteTarget(
+        path.join(originalAgentsDir, entry.name),
+        path.join(workspaceAgentsDir, entry.name),
+      );
+    }
+  }
+
+  await symlinkAbsoluteTarget(runtimeSkillsDir, path.join(workspaceAgentsDir, "skills"));
+  await symlinkAbsoluteTarget(runtimeSkillsDir, path.join(workspaceDir, "skills"));
+}
+
+async function materializeBundle(
+  project: Awaited<ReturnType<typeof loadProject>>,
+  manifest: BundleManifest,
+  runtimeSkillsDir: string,
+): Promise<void> {
+  const bundleDir = path.join(project.paths.storeDir, manifest.skillName);
+  const skillRoot = path.join(runtimeSkillsDir, manifest.skillName);
+  await ensureDir(skillRoot);
+
+  const contentKey = manifest.encryption.enabled && manifest.encryption.wrappedKey
+    ? unwrapContentKey(manifest.encryption.wrappedKey, project.masterKey)
+    : null;
+
+  for (const fileEntry of manifest.files) {
+    const storedFilePath = path.join(bundleDir, PAYLOAD_DIR, fileEntry.storedPath);
+    const destinationPath = path.join(skillRoot, fileEntry.relativePath);
+    const storedBytes = await readFile(storedFilePath);
+    const plaintext = contentKey
+      ? decryptBytes(storedBytes, contentKey, fileEntry.relativePath)
+      : storedBytes;
+
+    await ensureDir(path.dirname(destinationPath));
+    await writeFile(destinationPath, plaintext);
+  }
+}

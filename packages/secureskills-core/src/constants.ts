@@ -1,0 +1,16 @@
+export const SECURESKILLS_DIR = ".secureskills";
+export const CONFIG_FILE = "config.json";
+export const LOCK_FILE = "lock.json";
+export const KEYS_DIR = "keys";
+export const STORE_DIR = "store";
+export const RUNTIME_DIR = "runtime";
+export const PAYLOAD_DIR = "payload";
+export const MANIFEST_FILE = "manifest.json";
+export const SIGNATURE_FILE = "manifest.sig";
+export const SIGNING_PRIVATE_KEY_FILE = "signing.private.pem";
+export const SIGNING_PUBLIC_KEY_FILE = "signing.public.pem";
+export const MASTER_KEY_FILE = "master.key";
+export const SKILL_MARKER_FILE = "SKILL.md";
+export const SUPPORTED_RUNTIME_SKILL_PATHS = [".agents/skills", "skills"] as const;
+export const CONFIG_VERSION = 1;
+export const LOCKFILE_VERSION = 1;
