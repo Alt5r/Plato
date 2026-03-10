@@ -100,6 +100,7 @@ export interface AddSkillResult {
   sourceRef: string;
   destination: string;
   manifestSha256: string;
+  initializedProject: boolean;
 }
 
 export interface VerifyBundleResult {

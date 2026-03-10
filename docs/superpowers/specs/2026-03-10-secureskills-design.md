@@ -71,6 +71,8 @@ Loose Markdown files are never included in the generated runtime view.
 - `secureskills inspect <skill>`
 - `secureskills run -- <agent command...>`
 
+`add` is the main user entrypoint and auto-initializes `.secureskills/` if the project has not been set up yet. Supported sources include local directories, GitHub URLs, `owner/repo` shorthand, and other cloneable git URLs.
+
 ## Error Handling
 
 - Signature mismatch: hard fail
@@ -93,3 +95,7 @@ Loose Markdown files are never included in the generated runtime view.
 - no publisher PKI
 - no remote key sync
 - no transparent filesystem enforcement outside the wrapper or library contract
+
+## Deferred Risk
+
+An already-compromised local process with enough privilege could still invoke `secureskills add` itself and authorize a malicious skill through the legitimate install path. This is outside the v1 trust boundary and should be mitigated later with stronger source policy and approval controls.

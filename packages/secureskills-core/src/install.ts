@@ -3,7 +3,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { MANIFEST_FILE, PAYLOAD_DIR, SIGNATURE_FILE } from "./constants.ts";
-import { loadProject, readLockfile, writeLockfile } from "./config.ts";
+import { ensureProject, readLockfile, writeLockfile } from "./config.ts";
 import { encryptBytes, manifestSha256, signManifest, wrapContentKey } from "./crypto.ts";
 import { ensureDir, listFilesRecursive, pathExists, removeIfExists, sha256Hex, writeJsonFile } from "./fs-utils.ts";
 import { findSkillDirectory, resolveSource } from "./source.ts";
@@ -15,7 +15,7 @@ export async function addSkill(
   skillName: string,
   options: AddSkillOptions = {},
 ): Promise<AddSkillResult> {
-  const project = await loadProject(projectRoot);
+  const { project, initializedProject } = await ensureProject(projectRoot);
   const resolvedSource = await resolveSource(projectRoot, sourceRef);
   const stageDirectory = path.join(project.paths.storeDir, `.stage-${skillName}-${randomUUID()}`);
   const destinationDirectory = path.join(project.paths.storeDir, skillName);
@@ -103,6 +103,7 @@ export async function addSkill(
       sourceRef: resolvedSource.ref,
       destination: destinationDirectory,
       manifestSha256: lockEntry.manifestSha256,
+      initializedProject,
     };
   } finally {
     await resolvedSource.cleanup();

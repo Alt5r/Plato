@@ -10,11 +10,13 @@ import {
   setupProject,
   verifyProject,
 } from "../../secureskills-core/src/index.ts";
+import { uninstallPlaTo } from "./uninstall.ts";
 
 function printUsage(): void {
   console.log(`Usage:
   secureskills setup [--encrypt-by-default] [--root <path>]
   secureskills add <source> --skill <name> [--encrypt] [--root <path>]
+  secureskills uninstall
   secureskills verify [--root <path>]
   secureskills inspect <skill> [--root <path>]
   secureskills run [--root <path>] -- <command...>`);
@@ -103,6 +105,12 @@ async function main(): Promise<void> {
       }
 
       process.exitCode = report.ok ? 0 : 1;
+      return;
+    }
+
+    case "uninstall": {
+      const result = await uninstallPlaTo();
+      console.log(`removed global package and install directory ${result.installDir}`);
       return;
     }
 

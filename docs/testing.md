@@ -3,8 +3,10 @@
 ## Coverage Targets
 
 - key generation and config initialization
+- auto-initialization during first `add`
 - canonical manifest generation and signature verification
 - plaintext installs and encrypted installs
+- git-backed source installs
 - tamper detection for stored payloads and manifests
 - ephemeral runtime generation for wrapped agent execution
 

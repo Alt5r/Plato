@@ -1,6 +1,11 @@
 {
   "version": 1,
   "skills": {
+    "ascii-cli-logo-banner": {
+      "source": "partme-ai/full-stack-skills",
+      "sourceType": "github",
+      "computedHash": "7f073dcaf1d7b78c1dba415f6c8f8aabe4883df0899bb1f670e5ae7047dcbf7b"
+    },
     "brainstorming": {
       "source": "obra/superpowers",
       "sourceType": "github",

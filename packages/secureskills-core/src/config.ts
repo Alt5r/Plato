@@ -79,6 +79,23 @@ export async function setupProject(rootDir: string, options: SetupOptions = {}):
   };
 }
 
+export async function isProjectInitialized(rootDir: string): Promise<boolean> {
+  const paths = resolveProjectPaths(rootDir);
+  return pathExists(paths.configPath);
+}
+
+export async function ensureProject(rootDir: string): Promise<{ project: ProjectContext; initializedProject: boolean }> {
+  const initializedProject = !(await isProjectInitialized(rootDir));
+  if (initializedProject) {
+    await setupProject(rootDir);
+  }
+
+  return {
+    project: await loadProject(rootDir),
+    initializedProject,
+  };
+}
+
 export async function loadProject(rootDir: string): Promise<ProjectContext> {
   const paths = resolveProjectPaths(rootDir);
   if (!(await pathExists(paths.configPath))) {

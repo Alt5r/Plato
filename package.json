@@ -1,12 +1,14 @@
 {
-  "name": "secureskills-workspace",
-  "private": true,
+  "name": "secureskills",
   "type": "module",
+  "bin": {
+    "secureskills": "./bin/secureskills.js"
+  },
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "cli": "node --experimental-strip-types packages/secureskills-cli/src/bin.ts",
+    "cli": "node ./bin/secureskills.js",
     "test": "node --experimental-strip-types --test tests/*.test.ts"
   }
 }

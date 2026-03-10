@@ -19,6 +19,9 @@ function looksLikeGitSource(sourceRef: string): boolean {
   return (
     sourceRef.startsWith("http://") ||
     sourceRef.startsWith("https://") ||
+    sourceRef.startsWith("file://") ||
+    sourceRef.startsWith("ssh://") ||
+    sourceRef.startsWith("git+https://") ||
     sourceRef.startsWith("git@") ||
     sourceRef.endsWith(".git") ||
     /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(sourceRef)
@@ -26,6 +29,10 @@ function looksLikeGitSource(sourceRef: string): boolean {
 }
 
 function normalizeGitSource(sourceRef: string): string {
+  if (sourceRef.startsWith("git+https://")) {
+    return sourceRef.slice("git+".length);
+  }
+
   if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(sourceRef)) {
     return `https://github.com/${sourceRef}.git`;
   }
