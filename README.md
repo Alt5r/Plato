@@ -56,12 +56,16 @@ secureskills setup
 ## Codex Workflow
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh | bash
+exec zsh
 secureskills add https://github.com/vercel-labs/agent-skills --skill react-best-practices
 secureskills enable codex
 codex
 ```
 
-`enable codex` installs a small `zsh` hook under your home directory, marks the current repo as Codex-enabled, and keeps the real `codex` binary untouched. After that, typing `codex` inside the repo launches Codex through Plato's verified runtime. Outside enabled repos, `codex` behaves normally.
+If `codex` is already installed when Plato is installed, the installer preinstalls the `zsh` hook once. After one new terminal or `exec zsh`, `enable codex` only needs to mark the repo as enabled and no extra reload is needed. If Codex is installed later, `enable codex` will still install the hook as a fallback and tell you to refresh the shell once.
+
+The integration keeps the real `codex` binary untouched. Outside enabled repos, `codex` behaves normally.
 
 ## Local Development
 

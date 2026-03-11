@@ -17,6 +17,7 @@ import {
   doctorCodex,
   disableCodexForRepo,
   enableCodexForRepo,
+  installCodexShellHook,
   launchCodex,
 } from "../packages/secureskills-cli/src/codex-integration.ts";
 import { uninstallPlaTo } from "../packages/secureskills-cli/src/uninstall.ts";
@@ -216,6 +217,42 @@ test("enable codex installs the shell hook and marks the repo enabled", async ()
     const disableResult = await disableCodexForRepo(projectDir);
     assert.equal(disableResult.disabled, true);
     await assert.rejects(stat(path.join(projectDir, ".secureskills", "integrations", "codex.json")));
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("enable codex reuses a preinstalled shell hook without another update", async () => {
+  const projectDir = await createTempProject();
+  const homeDir = await mkdtemp(path.join(tmpdir(), "plato-preinstalled-home-"));
+  const platoHomeDir = path.join(homeDir, ".config", "plato");
+  const shellProfilePath = path.join(homeDir, ".zshrc");
+  const fakeCodexPath = path.join(homeDir, "codex");
+
+  try {
+    await writeFile(fakeCodexPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    await chmod(fakeCodexPath, 0o755);
+
+    const firstInstall = await installCodexShellHook({
+      platoHomeDir,
+      shellProfilePath,
+      realCodexPath: fakeCodexPath,
+    });
+    const secondInstall = await installCodexShellHook({
+      platoHomeDir,
+      shellProfilePath,
+      realCodexPath: fakeCodexPath,
+    });
+    const enableResult = await enableCodexForRepo(projectDir, {
+      platoHomeDir,
+      shellProfilePath,
+      realCodexPath: fakeCodexPath,
+    });
+
+    assert.equal(firstInstall.shellHookUpdated, true);
+    assert.equal(secondInstall.shellHookUpdated, false);
+    assert.equal(enableResult.shellHookUpdated, false);
   } finally {
     await rm(projectDir, { recursive: true, force: true });
     await rm(homeDir, { recursive: true, force: true });

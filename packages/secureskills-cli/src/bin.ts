@@ -10,7 +10,14 @@ import {
   setupProject,
   verifyProject,
 } from "../../secureskills-core/src/index.ts";
-import { discoverProjectRoot, doctorCodex, disableCodexForRepo, enableCodexForRepo, launchCodex } from "./codex-integration.ts";
+import {
+  discoverProjectRoot,
+  doctorCodex,
+  disableCodexForRepo,
+  enableCodexForRepo,
+  installCodexShellHook,
+  launchCodex,
+} from "./codex-integration.ts";
 import { uninstallPlaTo } from "./uninstall.ts";
 
 function printUsage(): void {
@@ -127,6 +134,9 @@ async function main(): Promise<void> {
       if (result.initializedProject) {
         console.log("initialized .secureskills for this repo");
       }
+      if (result.shellHookUpdated) {
+        console.log("shell hook updated; open a new terminal or run 'exec zsh' once if Codex was not already intercepted in this shell");
+      }
       return;
     }
 
@@ -173,6 +183,17 @@ async function main(): Promise<void> {
       const commandArgs = separatorIndex === -1 ? args : args.slice(separatorIndex + 1);
       const exitCode = await launchCodex(commandArgs, process.cwd());
       process.exitCode = exitCode;
+      return;
+    }
+
+    case "install-codex-shell": {
+      const result = await installCodexShellHook();
+      console.log(`installed Codex shell hook at ${result.shellHookPath}`);
+      console.log(`shell profile: ${result.shellProfilePath}`);
+      console.log(`real codex: ${result.realCodexPath}`);
+      if (result.shellHookUpdated) {
+        console.log("open a new terminal or run 'exec zsh' once to activate the Codex shell hook");
+      }
       return;
     }
 

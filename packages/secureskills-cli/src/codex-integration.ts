@@ -27,6 +27,7 @@ export interface CodexEnableResult {
   shellHookPath: string;
   shellProfilePath: string;
   realCodexPath: string;
+  shellHookUpdated: boolean;
 }
 
 export interface CodexDisableResult {
@@ -45,6 +46,13 @@ export interface CodexDoctorReport {
   realCodexPath: string | null;
   realCodexPathUsable: boolean;
   issues: string[];
+}
+
+export interface CodexShellInstallResult {
+  shellHookPath: string;
+  shellProfilePath: string;
+  realCodexPath: string;
+  shellHookUpdated: boolean;
 }
 
 interface CodexIntegrationPaths {
@@ -195,6 +203,27 @@ async function installShellHook(paths: CodexIntegrationPaths, shellProfilePath: 
   await upsertProfileSourceBlock(shellProfilePath, paths.shellHookPath);
 }
 
+export async function installCodexShellHook(
+  options: CodexIntegrationOptions = {},
+): Promise<CodexShellInstallResult> {
+  const paths = resolveIntegrationPaths(options);
+  const shellProfilePath = options.shellProfilePath ?? await readStoredShellProfilePath(paths) ?? defaultShellProfilePath();
+  const realCodexPath = await resolveRealCodexPath(paths, options);
+  const storedRealCodexPath = await readStoredRealCodexPath(paths);
+  const shellHookInstalled = await pathExists(paths.shellHookPath);
+  const shellProfileConfigured = await profileHasSourceBlock(shellProfilePath);
+  const shellHookUpdated = !shellHookInstalled || !shellProfileConfigured || storedRealCodexPath !== realCodexPath;
+
+  await installShellHook(paths, shellProfilePath, realCodexPath);
+
+  return {
+    shellHookPath: paths.shellHookPath,
+    shellProfilePath,
+    realCodexPath,
+    shellHookUpdated,
+  };
+}
+
 async function currentRepoMarker(startDir: string): Promise<string | null> {
   let currentDir = path.resolve(startDir);
 
@@ -249,11 +278,7 @@ export async function enableCodexForRepo(
   options: CodexIntegrationOptions = {},
 ): Promise<CodexEnableResult> {
   const { project, initializedProject } = await ensureProject(repoRoot);
-  const paths = resolveIntegrationPaths(options);
-  const shellProfilePath = options.shellProfilePath ?? await readStoredShellProfilePath(paths) ?? defaultShellProfilePath();
-  const realCodexPath = await resolveRealCodexPath(paths, options);
-
-  await installShellHook(paths, shellProfilePath, realCodexPath);
+  const shellInstall = await installCodexShellHook(options);
   await writeJsonFile(codexMarkerPath(project.rootDir), {
     version: 1,
     enabledAt: new Date().toISOString(),
@@ -262,9 +287,10 @@ export async function enableCodexForRepo(
   return {
     repoRoot: project.rootDir,
     initializedProject,
-    shellHookPath: paths.shellHookPath,
-    shellProfilePath,
-    realCodexPath,
+    shellHookPath: shellInstall.shellHookPath,
+    shellProfilePath: shellInstall.shellProfilePath,
+    realCodexPath: shellInstall.realCodexPath,
+    shellHookUpdated: shellInstall.shellHookUpdated,
   };
 }
 

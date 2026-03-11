@@ -23,6 +23,7 @@ The current CLI uses Node's `--experimental-strip-types` support, so use a moder
 3. Clones `https://github.com/Alt5r/Plato.git` into `~/.local/share/plato` by default.
 4. Updates that checkout if it already exists.
 5. Runs `npm install -g <install-dir>`.
+6. If `codex` is already installed, installs the Plato Codex `zsh` hook automatically.
 
 You can override the install directory:
 
@@ -63,6 +64,7 @@ If you are running commands outside the target project directory, pass `--root /
 Inside a project where you want normal `codex` usage to go through Plato:
 
 ```bash
+exec zsh
 cd /path/to/project
 secureskills add https://github.com/vercel-labs/agent-skills --skill react-best-practices
 secureskills enable codex
@@ -74,7 +76,15 @@ After that, just run:
 codex
 ```
 
-The first enable writes a small `zsh` hook in your home directory and adds one `source` line to your shell profile. It does not replace the real `codex` binary or write to system directories.
+If `codex` was already installed when Plato was installed, the installer already wrote the shell hook and shell-profile source line. In that normal case, `enable codex` does not require another shell reload.
+
+If Codex was not installed yet when Plato was installed, `enable codex` will install the shell hook as a fallback and then you should open a new terminal or run:
+
+```bash
+exec zsh
+```
+
+The integration does not replace the real `codex` binary or write to system directories.
 
 ## Uninstall
 

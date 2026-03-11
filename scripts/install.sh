@@ -56,6 +56,19 @@ main() {
   echo "Running npm install -g $INSTALL_DIR"
   npm install -g "$INSTALL_DIR"
 
+  if command -v codex >/dev/null 2>&1; then
+    REAL_CODEX_PATH="$(command -v codex)"
+    echo "Codex detected. Installing Plato Codex shell hook."
+    if PLATO_CODEX_REAL_PATH="$REAL_CODEX_PATH" node "$INSTALL_DIR/bin/secureskills.js" install-codex-shell; then
+      CODEX_MESSAGE="Codex shell hook installed. Open a new terminal or run 'exec zsh' once."
+    else
+      echo "Warning: failed to install the Codex shell hook. You can retry later with 'secureskills enable codex'." >&2
+      CODEX_MESSAGE="Codex shell hook was not installed."
+    fi
+  else
+    CODEX_MESSAGE="Codex not found. If you install Codex later, run 'secureskills enable codex' inside a repo."
+  fi
+
   cat <<'EOF'
 
 PlaTo installed.
@@ -66,6 +79,8 @@ Try:
   secureskills enable codex
   secureskills uninstall
 EOF
+  echo
+  echo "$CODEX_MESSAGE"
 }
 
 main "$@"
