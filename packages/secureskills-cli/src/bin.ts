@@ -10,12 +10,16 @@ import {
   setupProject,
   verifyProject,
 } from "../../secureskills-core/src/index.ts";
+import { discoverProjectRoot, doctorCodex, disableCodexForRepo, enableCodexForRepo, launchCodex } from "./codex-integration.ts";
 import { uninstallPlaTo } from "./uninstall.ts";
 
 function printUsage(): void {
   console.log(`Usage:
   secureskills setup [--encrypt-by-default] [--root <path>]
   secureskills add <source> --skill <name> [--encrypt] [--root <path>]
+  secureskills enable codex [--root <path>]
+  secureskills disable codex [--root <path>]
+  secureskills doctor codex [--root <path>]
   secureskills uninstall
   secureskills verify [--root <path>]
   secureskills inspect <skill> [--root <path>]
@@ -57,6 +61,7 @@ async function main(): Promise<void> {
   const rootArg = pullOption(args, "--root");
   const projectRoot = path.resolve(rootArg ?? process.cwd());
   const command = args.shift();
+  const integrationRoot = await discoverProjectRoot(projectRoot) ?? projectRoot;
 
   switch (command) {
     case "setup": {
@@ -105,6 +110,69 @@ async function main(): Promise<void> {
       }
 
       process.exitCode = report.ok ? 0 : 1;
+      return;
+    }
+
+    case "enable": {
+      const target = args.shift();
+      if (target !== "codex") {
+        throw new Error('Supported target: "codex"');
+      }
+
+      const result = await enableCodexForRepo(integrationRoot);
+      console.log(`enabled Codex integration for ${result.repoRoot}`);
+      console.log(`shell hook: ${result.shellHookPath}`);
+      console.log(`shell profile: ${result.shellProfilePath}`);
+      console.log(`real codex: ${result.realCodexPath}`);
+      if (result.initializedProject) {
+        console.log("initialized .secureskills for this repo");
+      }
+      return;
+    }
+
+    case "disable": {
+      const target = args.shift();
+      if (target !== "codex") {
+        throw new Error('Supported target: "codex"');
+      }
+
+      const result = await disableCodexForRepo(integrationRoot);
+      console.log(result.disabled ? `disabled Codex integration for ${result.repoRoot}` : `Codex integration was not enabled for ${result.repoRoot}`);
+      return;
+    }
+
+    case "doctor": {
+      const target = args.shift();
+      if (target !== "codex") {
+        throw new Error('Supported target: "codex"');
+      }
+
+      const report = await doctorCodex(integrationRoot);
+      console.log(`repo enabled: ${report.repoEnabled ? "yes" : "no"}`);
+      if (report.repoRoot) {
+        console.log(`repo root: ${report.repoRoot}`);
+      }
+      console.log(`shell hook installed: ${report.shellHookInstalled ? "yes" : "no"}`);
+      console.log(`shell profile configured: ${report.shellProfileConfigured ? "yes" : "no"}`);
+      console.log(`shell profile: ${report.shellProfilePath}`);
+      console.log(`real codex path: ${report.realCodexPath ?? "(missing)"}`);
+      process.exitCode = report.issues.length === 0 ? 0 : 1;
+      for (const issue of report.issues) {
+        console.error(`issue ${issue}`);
+      }
+      return;
+    }
+
+    case "launch": {
+      const target = args.shift();
+      if (target !== "codex") {
+        throw new Error('Supported target: "codex"');
+      }
+
+      const separatorIndex = args.indexOf("--");
+      const commandArgs = separatorIndex === -1 ? args : args.slice(separatorIndex + 1);
+      const exitCode = await launchCodex(commandArgs, process.cwd());
+      process.exitCode = exitCode;
       return;
     }
 

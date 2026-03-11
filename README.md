@@ -12,6 +12,7 @@ After installation:
 
 ```bash
 secureskills add https://github.com/vercel-labs/skills --skill find-skills
+secureskills enable codex
 ```
 
 See [INSTALL.md](./INSTALL.md) for local and global installation details.
@@ -23,6 +24,7 @@ See [INSTALL.md](./INSTALL.md) for local and global installation details.
 - supports local sources, GitHub URLs, and `owner/repo` shorthand
 - exposes only authenticated skills through `secureskills run`
 - supports optional at-rest encryption for stored payloads
+- can integrate with Codex so users keep typing plain `codex` inside enabled repos
 
 ## Install Shape
 
@@ -41,12 +43,25 @@ secureskills add anthropics/skills --skill skill-creator
 ```bash
 secureskills add <source> --skill <name>
 secureskills add <source> --skill <name> --encrypt
+secureskills enable codex
+secureskills disable codex
+secureskills doctor codex
 secureskills verify
 secureskills inspect <skill>
 secureskills run -- <command...>
 secureskills uninstall
 secureskills setup
 ```
+
+## Codex Workflow
+
+```bash
+secureskills add https://github.com/vercel-labs/agent-skills --skill react-best-practices
+secureskills enable codex
+codex
+```
+
+`enable codex` installs a small `zsh` hook under your home directory, marks the current repo as Codex-enabled, and keeps the real `codex` binary untouched. After that, typing `codex` inside the repo launches Codex through Plato's verified runtime. Outside enabled repos, `codex` behaves normally.
 
 ## Local Development
 

@@ -63,6 +63,7 @@ PlaTo installed.
 Try:
   secureskills --help
   secureskills add https://github.com/vercel-labs/skills --skill find-skills
+  secureskills enable codex
   secureskills uninstall
 EOF
 }

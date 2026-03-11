@@ -13,6 +13,12 @@ import {
   setupProject,
   verifyProject,
 } from "../packages/secureskills-core/src/index.ts";
+import {
+  doctorCodex,
+  disableCodexForRepo,
+  enableCodexForRepo,
+  launchCodex,
+} from "../packages/secureskills-cli/src/codex-integration.ts";
 import { uninstallPlaTo } from "../packages/secureskills-cli/src/uninstall.ts";
 
 const repoRoot = process.cwd();
@@ -171,14 +177,139 @@ test("verified workspace exposes only authorized skills and cleans up", async ()
   }
 });
 
-test("uninstall removes the managed install directory after npm uninstall succeeds", async () => {
+test("enable codex installs the shell hook and marks the repo enabled", async () => {
+  const projectDir = await createTempProject();
+  const homeDir = await mkdtemp(path.join(tmpdir(), "plato-home-"));
+  const platoHomeDir = path.join(homeDir, ".config", "plato");
+  const shellProfilePath = path.join(homeDir, ".zshrc");
+  const fakeCodexPath = path.join(homeDir, "codex");
+
+  try {
+    await writeFile(
+      fakeCodexPath,
+      "#!/usr/bin/env bash\nexit 0\n",
+      "utf8",
+    );
+    await chmod(fakeCodexPath, 0o755);
+
+    const result = await enableCodexForRepo(projectDir, {
+      platoHomeDir,
+      shellProfilePath,
+      realCodexPath: fakeCodexPath,
+    });
+    const doctor = await doctorCodex(projectDir, {
+      platoHomeDir,
+      shellProfilePath,
+    });
+    const shellProfile = await readFile(shellProfilePath, "utf8");
+
+    assert.equal(result.initializedProject, true);
+    await assert.doesNotReject(stat(path.join(projectDir, ".secureskills", "integrations", "codex.json")));
+    await assert.doesNotReject(stat(path.join(platoHomeDir, "shell", "codex.zsh")));
+    assert.match(shellProfile, /Plato Codex integration/);
+    assert.equal(doctor.repoEnabled, true);
+    assert.equal(doctor.shellHookInstalled, true);
+    assert.equal(doctor.shellProfileConfigured, true);
+    assert.equal(doctor.realCodexPathUsable, true);
+    assert.deepEqual(doctor.issues, []);
+
+    const disableResult = await disableCodexForRepo(projectDir);
+    assert.equal(disableResult.disabled, true);
+    await assert.rejects(stat(path.join(projectDir, ".secureskills", "integrations", "codex.json")));
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("launch codex uses the verified workspace and preserves the subdirectory", async () => {
+  const projectDir = await createTempProject();
+  const homeDir = await mkdtemp(path.join(tmpdir(), "plato-launch-home-"));
+  const platoHomeDir = path.join(homeDir, ".config", "plato");
+  const shellProfilePath = path.join(homeDir, ".zshrc");
+  const fakeCodexPath = path.join(homeDir, "codex");
+  const launchDir = path.join(projectDir, "src");
+  const resultFile = path.join(homeDir, "launch-result.txt");
+
+  try {
+    await mkdir(launchDir, { recursive: true });
+    await setupProject(projectDir);
+    await addSkill(projectDir, fixtureSource, "find-skills");
+    await mkdir(path.join(projectDir, ".agents", "skills", "rogue"), { recursive: true });
+    await writeFile(path.join(projectDir, ".agents", "skills", "rogue", "SKILL.md"), "rogue\n", "utf8");
+    await writeFile(
+      fakeCodexPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+RESULT_FILE="$1"
+find_skill() {
+  local skill_name="$1"
+  local current_dir="$PWD"
+  while true; do
+    if [ -f "$current_dir/.agents/skills/$skill_name/SKILL.md" ]; then
+      return 0
+    fi
+    local parent_dir
+    parent_dir="$(dirname "$current_dir")"
+    if [ "$parent_dir" = "$current_dir" ]; then
+      return 1
+    fi
+    current_dir="$parent_dir"
+  done
+}
+{
+  printf 'cwd=%s\n' "$PWD"
+  if find_skill "find-skills"; then printf 'find-skills=true\n'; else printf 'find-skills=false\n'; fi
+  if find_skill "rogue"; then printf 'rogue=true\n'; else printf 'rogue=false\n'; fi
+} > "$RESULT_FILE"
+`,
+      "utf8",
+    );
+    await chmod(fakeCodexPath, 0o755);
+
+    await enableCodexForRepo(projectDir, {
+      platoHomeDir,
+      shellProfilePath,
+      realCodexPath: fakeCodexPath,
+    });
+
+    const exitCode = await launchCodex([resultFile], launchDir, {
+      platoHomeDir,
+      shellProfilePath,
+      realCodexPath: fakeCodexPath,
+    });
+    const launchOutput = await readFile(resultFile, "utf8");
+
+    assert.equal(exitCode, 0);
+    assert.match(launchOutput, /cwd=.*\/src/);
+    assert.match(launchOutput, /find-skills=true/);
+    assert.match(launchOutput, /rogue=false/);
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("uninstall removes the managed install directory and Codex shell integration after npm uninstall succeeds", async () => {
   const installDir = await mkdtemp(path.join(tmpdir(), "plato-install-dir-"));
   const fakeBinDir = await mkdtemp(path.join(tmpdir(), "plato-fake-bin-"));
   const fakeNpmPath = path.join(fakeBinDir, "npm");
   const logPath = path.join(fakeBinDir, "npm.log");
+  const homeDir = await mkdtemp(path.join(tmpdir(), "plato-uninstall-home-"));
+  const platoHomeDir = path.join(homeDir, ".config", "plato");
+  const shellProfilePath = path.join(homeDir, ".zshrc");
+  const fakeCodexPath = path.join(homeDir, "codex");
+  const projectDir = await createTempProject();
 
   try {
     await writeFile(path.join(installDir, "marker.txt"), "installed\n", "utf8");
+    await writeFile(fakeCodexPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    await chmod(fakeCodexPath, 0o755);
+    await enableCodexForRepo(projectDir, {
+      platoHomeDir,
+      shellProfilePath,
+      realCodexPath: fakeCodexPath,
+    });
     await writeFile(
       fakeNpmPath,
       `#!/usr/bin/env bash
@@ -192,14 +323,21 @@ printf '%s\\n' "$*" > "${logPath}"
     const result = await uninstallPlaTo({
       installDir,
       npmCommand: fakeNpmPath,
+      platoHomeDir,
+      shellProfilePath,
     });
 
     const loggedArgs = await readFile(logPath, "utf8");
+    const shellProfile = await readFile(shellProfilePath, "utf8");
     assert.equal(result.installDir, installDir);
     assert.match(loggedArgs, /^uninstall -g secureskills/);
     await assert.rejects(stat(installDir));
+    await assert.rejects(stat(platoHomeDir));
+    assert.doesNotMatch(shellProfile, /Plato Codex integration/);
   } finally {
+    await rm(projectDir, { recursive: true, force: true });
     await rm(installDir, { recursive: true, force: true });
     await rm(fakeBinDir, { recursive: true, force: true });
+    await rm(homeDir, { recursive: true, force: true });
   }
 });

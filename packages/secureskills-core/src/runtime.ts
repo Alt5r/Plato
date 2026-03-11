@@ -43,22 +43,34 @@ export async function createVerifiedWorkspace(projectRoot: string): Promise<Veri
   };
 }
 
-export async function runAgentCommand(projectRoot: string, command: string[]): Promise<number> {
+interface RunAgentOptions {
+  launchFromDir?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+export async function runAgentCommand(
+  projectRoot: string,
+  command: string[],
+  options: RunAgentOptions = {},
+): Promise<number> {
   if (command.length === 0) {
     throw new Error("Missing command after --");
   }
 
   const workspace = await createVerifiedWorkspace(projectRoot);
   try {
+    await materializeLaunchPath(projectRoot, workspace.workspaceDir, options.launchFromDir);
+    const launchCwd = resolveLaunchWorkingDirectory(projectRoot, workspace.workspaceDir, options.launchFromDir);
     const exitCode = await new Promise<number>((resolve, reject) => {
       const child = spawn(command[0], command.slice(1), {
-        cwd: workspace.workspaceDir,
+        cwd: launchCwd,
         stdio: "inherit",
         env: {
           ...process.env,
+          ...options.env,
           SECURESKILLS_RUNTIME_DIR: workspace.runtimeSkillsDir,
           SECURESKILLS_WORKSPACE_DIR: workspace.workspaceDir,
-          SECURESKILLS_ORIGINAL_CWD: projectRoot,
+          SECURESKILLS_ORIGINAL_CWD: options.launchFromDir ?? projectRoot,
         },
       });
 
@@ -72,6 +84,66 @@ export async function runAgentCommand(projectRoot: string, command: string[]): P
   } finally {
     await workspace.cleanup();
   }
+}
+
+async function materializeLaunchPath(projectRoot: string, workspaceDir: string, launchFromDir?: string): Promise<void> {
+  if (!launchFromDir) {
+    return;
+  }
+
+  const relativePath = path.relative(projectRoot, launchFromDir);
+  if (relativePath === "") {
+    return;
+  }
+
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error(`Launch directory ${launchFromDir} is outside the secured project root ${projectRoot}`);
+  }
+
+  const components = relativePath.split(path.sep).filter(Boolean);
+  let sourceDir = projectRoot;
+  let targetDir = workspaceDir;
+
+  for (let index = 0; index < components.length; index += 1) {
+    const component = components[index];
+    sourceDir = path.join(sourceDir, component);
+    targetDir = path.join(targetDir, component);
+
+    await removeIfExists(targetDir);
+    await ensureDir(targetDir);
+
+    const entries = await readdir(sourceDir, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+
+    const nextComponent = components[index + 1];
+    for (const entry of entries) {
+      const sourcePath = path.join(sourceDir, entry.name);
+      const targetPath = path.join(targetDir, entry.name);
+
+      if (entry.name === nextComponent && entry.isDirectory()) {
+        continue;
+      }
+
+      await symlinkAbsoluteTarget(sourcePath, targetPath);
+    }
+  }
+}
+
+function resolveLaunchWorkingDirectory(projectRoot: string, workspaceDir: string, launchFromDir?: string): string {
+  if (!launchFromDir) {
+    return workspaceDir;
+  }
+
+  const relativePath = path.relative(projectRoot, launchFromDir);
+  if (relativePath === "") {
+    return workspaceDir;
+  }
+
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error(`Launch directory ${launchFromDir} is outside the secured project root ${projectRoot}`);
+  }
+
+  return path.join(workspaceDir, relativePath);
 }
 
 async function linkWorkspaceEntries(projectRoot: string, workspaceDir: string): Promise<void> {
