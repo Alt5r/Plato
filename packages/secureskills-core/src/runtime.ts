@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdtemp, readdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -9,6 +9,8 @@ import { decryptBytes, unwrapContentKey } from "./crypto.ts";
 import { ensureDir, pathExists, removeIfExists, symlinkAbsoluteTarget } from "./fs-utils.ts";
 import { verifyProject } from "./verify.ts";
 import type { BundleManifest, VerifiedWorkspace } from "./types.ts";
+
+const ROOT_SYNC_EXCLUDES = new Set([".agents", ".git", ".secureskills", "skills"]);
 
 export async function createVerifiedWorkspace(projectRoot: string): Promise<VerifiedWorkspace> {
   const report = await verifyProject(projectRoot);
@@ -80,6 +82,7 @@ export async function runAgentCommand(
       });
     });
 
+    await syncWorkspaceEdits(workspace.workspaceDir, projectRoot);
     return exitCode;
   } finally {
     await workspace.cleanup();
@@ -224,4 +227,143 @@ async function materializeBundle(
     await ensureDir(path.dirname(destinationPath));
     await writeFile(destinationPath, plaintext);
   }
+}
+
+async function syncWorkspaceEdits(workspaceDir: string, projectRoot: string): Promise<void> {
+  await syncWorkspaceDirectory(workspaceDir, projectRoot, projectRoot, true);
+}
+
+async function syncWorkspaceDirectory(
+  workspaceDir: string,
+  projectDir: string,
+  projectRoot: string,
+  isRoot: boolean,
+): Promise<void> {
+  const workspaceEntries = await readdir(workspaceDir, { withFileTypes: true });
+  const projectEntries = await readdir(projectDir, { withFileTypes: true });
+  const excludedNames = isRoot ? ROOT_SYNC_EXCLUDES : null;
+  const workspaceEntriesByName = new Map(
+    workspaceEntries
+      .filter((entry) => !excludedNames?.has(entry.name))
+      .map((entry) => [entry.name, entry]),
+  );
+
+  for (const workspaceEntry of workspaceEntries) {
+    if (excludedNames?.has(workspaceEntry.name)) {
+      continue;
+    }
+
+    await syncWorkspaceEntry(
+      path.join(workspaceDir, workspaceEntry.name),
+      path.join(projectDir, workspaceEntry.name),
+      projectRoot,
+    );
+  }
+
+  for (const projectEntry of projectEntries) {
+    if (excludedNames?.has(projectEntry.name)) {
+      continue;
+    }
+
+    if (!workspaceEntriesByName.has(projectEntry.name)) {
+      await removeIfExists(path.join(projectDir, projectEntry.name));
+    }
+  }
+}
+
+async function syncWorkspaceEntry(
+  workspacePath: string,
+  projectPath: string,
+  projectRoot: string,
+): Promise<void> {
+  const workspaceStats = await lstat(workspacePath);
+
+  if (workspaceStats.isSymbolicLink()) {
+    const linkTarget = await readlink(workspacePath);
+    const resolvedTarget = path.resolve(path.dirname(workspacePath), linkTarget);
+
+    if (resolvedTarget === projectPath) {
+      return;
+    }
+
+    if (isWithinProjectRoot(resolvedTarget, projectRoot)) {
+      await clonePath(resolvedTarget, projectPath);
+      return;
+    }
+
+    await removeIfExists(projectPath);
+    await ensureDir(path.dirname(projectPath));
+    await symlink(linkTarget, projectPath);
+    return;
+  }
+
+  if (workspaceStats.isDirectory()) {
+    const existingProjectStats = await lstatOrNull(projectPath);
+    if (existingProjectStats && !existingProjectStats.isDirectory()) {
+      await removeIfExists(projectPath);
+    }
+
+    await ensureDir(projectPath);
+    await syncWorkspaceDirectory(workspacePath, projectPath, projectRoot, false);
+    return;
+  }
+
+  if (workspaceStats.isFile()) {
+    await removeIfExists(projectPath);
+    await ensureDir(path.dirname(projectPath));
+    await copyFile(workspacePath, projectPath);
+    await chmod(projectPath, workspaceStats.mode & 0o777);
+    return;
+  }
+
+  throw new Error(`Unsupported workspace entry type while syncing edits: ${workspacePath}`);
+}
+
+async function clonePath(sourcePath: string, destinationPath: string): Promise<void> {
+  const sourceStats = await lstat(sourcePath);
+
+  if (sourceStats.isSymbolicLink()) {
+    const linkTarget = await readlink(sourcePath);
+    await removeIfExists(destinationPath);
+    await ensureDir(path.dirname(destinationPath));
+    await symlink(linkTarget, destinationPath);
+    return;
+  }
+
+  if (sourceStats.isDirectory()) {
+    await removeIfExists(destinationPath);
+    await ensureDir(destinationPath);
+    const entries = await readdir(sourcePath, { withFileTypes: true });
+    for (const entry of entries) {
+      await clonePath(path.join(sourcePath, entry.name), path.join(destinationPath, entry.name));
+    }
+    return;
+  }
+
+  if (sourceStats.isFile()) {
+    await removeIfExists(destinationPath);
+    await ensureDir(path.dirname(destinationPath));
+    await copyFile(sourcePath, destinationPath);
+    await chmod(destinationPath, sourceStats.mode & 0o777);
+    return;
+  }
+
+  throw new Error(`Unsupported source entry type while cloning path: ${sourcePath}`);
+}
+
+async function lstatOrNull(targetPath: string) {
+  try {
+    return await lstat(targetPath);
+  } catch {
+    return null;
+  }
+}
+
+function isWithinProjectRoot(candidatePath: string, projectRoot: string): boolean {
+  if (candidatePath === projectRoot) {
+    return true;
+  }
+
+  const relativePath = path.relative(projectRoot, candidatePath);
+  return relativePath !== "" && !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
 }
