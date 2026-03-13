@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { cleanupCodexShellIntegration } from "./codex-integration.ts";
+import { cleanupAllAgentShellIntegrations } from "./codex-integration.ts";
 
 export interface UninstallOptions {
   installDir?: string;
@@ -40,7 +40,7 @@ export async function uninstallPlaTo(options: UninstallOptions = {}): Promise<Un
     throw new Error(`npm uninstall failed with exit code ${result.status ?? 1}`);
   }
 
-  await cleanupCodexShellIntegration({
+  await cleanupAllAgentShellIntegrations({
     platoHomeDir: options.platoHomeDir,
     shellProfilePath: options.shellProfilePath,
   });

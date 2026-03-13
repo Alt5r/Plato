@@ -14,11 +14,11 @@ import {
   verifyProject,
 } from "../packages/secureskills-core/src/index.ts";
 import {
-  doctorCodex,
-  disableCodexForRepo,
-  enableCodexForRepo,
-  installCodexShellHook,
-  launchCodex,
+  doctorAgent,
+  disableAgentForRepo,
+  enableAgentForRepo,
+  installAgentShellHook,
+  launchAgent,
 } from "../packages/secureskills-cli/src/codex-integration.ts";
 import { uninstallPlaTo } from "../packages/secureskills-cli/src/uninstall.ts";
 
@@ -193,12 +193,12 @@ test("enable codex installs the shell hook and marks the repo enabled", async ()
     );
     await chmod(fakeCodexPath, 0o755);
 
-    const result = await enableCodexForRepo(projectDir, {
+    const result = await enableAgentForRepo("codex", projectDir, {
       platoHomeDir,
       shellProfilePath,
-      realCodexPath: fakeCodexPath,
+      realBinaryPath: fakeCodexPath,
     });
-    const doctor = await doctorCodex(projectDir, {
+    const doctor = await doctorAgent("codex", projectDir, {
       platoHomeDir,
       shellProfilePath,
     });
@@ -211,10 +211,10 @@ test("enable codex installs the shell hook and marks the repo enabled", async ()
     assert.equal(doctor.repoEnabled, true);
     assert.equal(doctor.shellHookInstalled, true);
     assert.equal(doctor.shellProfileConfigured, true);
-    assert.equal(doctor.realCodexPathUsable, true);
+    assert.equal(doctor.realBinaryPathUsable, true);
     assert.deepEqual(doctor.issues, []);
 
-    const disableResult = await disableCodexForRepo(projectDir);
+    const disableResult = await disableAgentForRepo("codex", projectDir);
     assert.equal(disableResult.disabled, true);
     await assert.rejects(stat(path.join(projectDir, ".secureskills", "integrations", "codex.json")));
   } finally {
@@ -234,20 +234,20 @@ test("enable codex reuses a preinstalled shell hook without another update", asy
     await writeFile(fakeCodexPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
     await chmod(fakeCodexPath, 0o755);
 
-    const firstInstall = await installCodexShellHook({
+    const firstInstall = await installAgentShellHook("codex", {
       platoHomeDir,
       shellProfilePath,
-      realCodexPath: fakeCodexPath,
+      realBinaryPath: fakeCodexPath,
     });
-    const secondInstall = await installCodexShellHook({
+    const secondInstall = await installAgentShellHook("codex", {
       platoHomeDir,
       shellProfilePath,
-      realCodexPath: fakeCodexPath,
+      realBinaryPath: fakeCodexPath,
     });
-    const enableResult = await enableCodexForRepo(projectDir, {
+    const enableResult = await enableAgentForRepo("codex", projectDir, {
       platoHomeDir,
       shellProfilePath,
-      realCodexPath: fakeCodexPath,
+      realBinaryPath: fakeCodexPath,
     });
 
     assert.equal(firstInstall.shellHookUpdated, true);
@@ -314,16 +314,16 @@ rm remove-me.txt
     );
     await chmod(fakeCodexPath, 0o755);
 
-    await enableCodexForRepo(projectDir, {
+    await enableAgentForRepo("codex", projectDir, {
       platoHomeDir,
       shellProfilePath,
-      realCodexPath: fakeCodexPath,
+      realBinaryPath: fakeCodexPath,
     });
 
-    const exitCode = await launchCodex([resultFile], launchDir, {
+    const exitCode = await launchAgent("codex", [resultFile], launchDir, {
       platoHomeDir,
       shellProfilePath,
-      realCodexPath: fakeCodexPath,
+      realBinaryPath: fakeCodexPath,
     });
     const launchOutput = await readFile(resultFile, "utf8");
     const createdFile = await readFile(createdFilePath, "utf8");
@@ -340,6 +340,128 @@ rm remove-me.txt
   }
 });
 
+test("enable claude installs the shell hook and marks the repo enabled", async () => {
+  const projectDir = await createTempProject();
+  const homeDir = await mkdtemp(path.join(tmpdir(), "plato-claude-home-"));
+  const platoHomeDir = path.join(homeDir, ".config", "plato");
+  const shellProfilePath = path.join(homeDir, ".zshrc");
+  const fakeClaudePath = path.join(homeDir, "claude");
+
+  try {
+    await writeFile(
+      fakeClaudePath,
+      "#!/usr/bin/env bash\nexit 0\n",
+      "utf8",
+    );
+    await chmod(fakeClaudePath, 0o755);
+
+    const result = await enableAgentForRepo("claude", projectDir, {
+      platoHomeDir,
+      shellProfilePath,
+      realBinaryPath: fakeClaudePath,
+    });
+    const doctor = await doctorAgent("claude", projectDir, {
+      platoHomeDir,
+      shellProfilePath,
+    });
+    const shellProfile = await readFile(shellProfilePath, "utf8");
+
+    assert.equal(result.initializedProject, true);
+    await assert.doesNotReject(stat(path.join(projectDir, ".secureskills", "integrations", "claude.json")));
+    await assert.doesNotReject(stat(path.join(platoHomeDir, "shell", "claude.zsh")));
+    assert.match(shellProfile, /Plato Claude integration/);
+    assert.equal(doctor.repoEnabled, true);
+    assert.equal(doctor.shellHookInstalled, true);
+    assert.equal(doctor.shellProfileConfigured, true);
+    assert.equal(doctor.realBinaryPathUsable, true);
+    assert.deepEqual(doctor.issues, []);
+
+    const disableResult = await disableAgentForRepo("claude", projectDir);
+    assert.equal(disableResult.disabled, true);
+    await assert.rejects(stat(path.join(projectDir, ".secureskills", "integrations", "claude.json")));
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("launch claude uses the verified workspace and preserves the subdirectory", async () => {
+  const projectDir = await createTempProject();
+  const homeDir = await mkdtemp(path.join(tmpdir(), "plato-claude-launch-home-"));
+  const platoHomeDir = path.join(homeDir, ".config", "plato");
+  const shellProfilePath = path.join(homeDir, ".zshrc");
+  const fakeClaudePath = path.join(homeDir, "claude");
+  const launchDir = path.join(projectDir, "src");
+  const resultFile = path.join(homeDir, "claude-launch-result.txt");
+  const createdFilePath = path.join(launchDir, "claude-index.html");
+
+  try {
+    await mkdir(launchDir, { recursive: true });
+    await setupProject(projectDir);
+    await addSkill(projectDir, fixtureSource, "find-skills");
+    await mkdir(path.join(projectDir, ".agents", "skills", "rogue"), { recursive: true });
+    await writeFile(path.join(projectDir, ".agents", "skills", "rogue", "SKILL.md"), "rogue\n", "utf8");
+    await writeFile(
+      fakeClaudePath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+RESULT_FILE="$1"
+find_skill() {
+  local skill_name="$1"
+  local current_dir="$PWD"
+  while true; do
+    if [ -f "$current_dir/.agents/skills/$skill_name/SKILL.md" ]; then
+      return 0
+    fi
+    local parent_dir
+    parent_dir="$(dirname "$current_dir")"
+    if [ "$parent_dir" = "$current_dir" ]; then
+      return 1
+    fi
+    current_dir="$parent_dir"
+  done
+}
+{
+  printf 'cwd=%s\n' "$PWD"
+  if find_skill "find-skills"; then printf 'find-skills=true\n'; else printf 'find-skills=false\n'; fi
+  if find_skill "rogue"; then printf 'rogue=true\n'; else printf 'rogue=false\n'; fi
+} > "$RESULT_FILE"
+cat > claude-index.html <<'EOF'
+<!DOCTYPE html>
+<html>
+  <body>generated by claude launcher test</body>
+</html>
+EOF
+`,
+      "utf8",
+    );
+    await chmod(fakeClaudePath, 0o755);
+
+    await enableAgentForRepo("claude", projectDir, {
+      platoHomeDir,
+      shellProfilePath,
+      realBinaryPath: fakeClaudePath,
+    });
+
+    const exitCode = await launchAgent("claude", [resultFile], launchDir, {
+      platoHomeDir,
+      shellProfilePath,
+      realBinaryPath: fakeClaudePath,
+    });
+    const launchOutput = await readFile(resultFile, "utf8");
+    const createdFile = await readFile(createdFilePath, "utf8");
+
+    assert.equal(exitCode, 0);
+    assert.match(launchOutput, /cwd=.*\/src/);
+    assert.match(launchOutput, /find-skills=true/);
+    assert.match(launchOutput, /rogue=false/);
+    assert.match(createdFile, /generated by claude launcher test/);
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
 test("uninstall removes the managed install directory and Codex shell integration after npm uninstall succeeds", async () => {
   const installDir = await mkdtemp(path.join(tmpdir(), "plato-install-dir-"));
   const fakeBinDir = await mkdtemp(path.join(tmpdir(), "plato-fake-bin-"));
@@ -349,16 +471,24 @@ test("uninstall removes the managed install directory and Codex shell integratio
   const platoHomeDir = path.join(homeDir, ".config", "plato");
   const shellProfilePath = path.join(homeDir, ".zshrc");
   const fakeCodexPath = path.join(homeDir, "codex");
+  const fakeClaudePath = path.join(homeDir, "claude");
   const projectDir = await createTempProject();
 
   try {
     await writeFile(path.join(installDir, "marker.txt"), "installed\n", "utf8");
     await writeFile(fakeCodexPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
     await chmod(fakeCodexPath, 0o755);
-    await enableCodexForRepo(projectDir, {
+    await writeFile(fakeClaudePath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+    await chmod(fakeClaudePath, 0o755);
+    await enableAgentForRepo("codex", projectDir, {
       platoHomeDir,
       shellProfilePath,
-      realCodexPath: fakeCodexPath,
+      realBinaryPath: fakeCodexPath,
+    });
+    await enableAgentForRepo("claude", projectDir, {
+      platoHomeDir,
+      shellProfilePath,
+      realBinaryPath: fakeClaudePath,
     });
     await writeFile(
       fakeNpmPath,
@@ -384,6 +514,7 @@ printf '%s\\n' "$*" > "${logPath}"
     await assert.rejects(stat(installDir));
     await assert.rejects(stat(platoHomeDir));
     assert.doesNotMatch(shellProfile, /Plato Codex integration/);
+    assert.doesNotMatch(shellProfile, /Plato Claude integration/);
   } finally {
     await rm(projectDir, { recursive: true, force: true });
     await rm(installDir, { recursive: true, force: true });

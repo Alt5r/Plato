@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh
 exec zsh
 ```
 
-Create or enter a project, install a skill, enable Codex integration, then use normal `codex`:
+Create or enter a project, install a skill, enable an agent integration, then use the normal agent command:
 
 ```bash
 mkdir plato-demo
@@ -42,7 +42,16 @@ secureskills enable codex
 codex
 ```
 
-If `codex` was already installed when PlaTo was installed, the installer preconfigures the `zsh` hook and the one-time `exec zsh` above is enough. After that, `secureskills enable codex` is a per-repo action and plain `codex` continues to work.
+The same model now works for both `codex` and `claude`:
+
+```bash
+secureskills enable claude
+claude
+```
+
+If either supported agent is already installed when PlaTo is installed, the installer can preconfigure that agent's `zsh` hook and the one-time `exec zsh` above is enough. After that, `secureskills enable <agent>` is a per-repo action and the plain agent command continues to work.
+
+If both are installed, the installer asks which hook to preinstall first.
 
 ## What PlaTo Does
 
@@ -51,8 +60,8 @@ If `codex` was already installed when PlaTo was installed, the installer preconf
 - Signs installed manifests with a local project key.
 - Verifies signatures and file digests before runtime exposure.
 - Optionally encrypts stored skill payloads at rest.
-- Exposes only authenticated skills through `secureskills run` or the Codex integration.
-- Leaves the real `codex` binary untouched.
+- Exposes only authenticated skills through `secureskills run` or the agent integrations.
+- Leaves the real `codex` and `claude` binaries untouched.
 
 ## What It Feels Like
 
@@ -72,7 +81,7 @@ The difference is what happens after install: PlaTo secures the bundle locally a
 
 When you add a skill, PlaTo does not just copy a `SKILL.md` into your project. It builds a secured local bundle, records what was installed, and verifies that bundle before an agent gets access to it.
 
-When you run an agent through PlaTo, or use Codex in a repo that has been enabled, PlaTo prepares a verified runtime view that contains authenticated skills only. Loose repo-local skills that were never installed through PlaTo are excluded from that runtime.
+When you run an agent through PlaTo, or use Codex or Claude in a repo that has been enabled, PlaTo prepares a verified runtime view that contains authenticated skills only. Loose repo-local skills that were never installed through PlaTo are excluded from that runtime.
 
 ### Technical Trust Model
 
@@ -80,7 +89,7 @@ When you run an agent through PlaTo, or use Codex in a repo that has been enable
 - Installed bundles get a canonical manifest plus a signature.
 - File contents are hashed and rechecked before runtime exposure.
 - Optional confidentiality uses encrypted payload storage in the local secured store.
-- Codex integration launches from a verified workspace so the secure skill surface is controlled by PlaTo.
+- Agent integrations launch from a verified workspace so the secure skill surface is controlled by PlaTo.
 - Normal project edits still write back to the real project; the secure workspace is only there to control what skills are visible.
 
 This is a local-first model. In v1, trust is owned by the user or project, not by a remote publisher PKI.
@@ -90,9 +99,9 @@ This is a local-first model. In v1, trust is owned by the user or project, not b
 ```bash
 secureskills setup [--encrypt-by-default] [--root <path>]
 secureskills add <source> --skill <name> [--encrypt] [--root <path>]
-secureskills enable codex [--root <path>]
-secureskills disable codex [--root <path>]
-secureskills doctor codex [--root <path>]
+secureskills enable <codex|claude> [--root <path>]
+secureskills disable <codex|claude> [--root <path>]
+secureskills doctor <codex|claude> [--root <path>]
 secureskills verify [--root <path>]
 secureskills inspect <skill> [--root <path>]
 secureskills run [--root <path>] -- <command...>
@@ -101,9 +110,9 @@ secureskills uninstall
 
 If you are outside the target project directory, pass `--root /path/to/project`.
 
-## Codex Integration
+## Agent Integration
 
-PlaTo's first zero-extra-command integration target is Codex.
+PlaTo currently supports zero-extra-command integration for both Codex and Claude.
 
 Inside an enabled repo:
 
@@ -113,11 +122,18 @@ secureskills enable codex
 codex
 ```
 
-Outside enabled repos, `codex` behaves normally.
+Or:
+
+```bash
+secureskills enable claude
+claude
+```
+
+Outside enabled repos, `codex` and `claude` behave normally.
 
 The integration model is intentionally conservative:
 
-- no replacement of the real `codex` binary
+- no replacement of the real agent binaries
 - no `sudo`
 - no writes to system directories
 - shell hook lives in the user's home directory
@@ -127,6 +143,7 @@ Use this command if you want to check whether the integration is active:
 
 ```bash
 secureskills doctor codex
+secureskills doctor claude
 ```
 
 ## Development And Testing
@@ -157,7 +174,7 @@ npm run cli -- verify
 - `packages/secureskills-core`
   Library logic for setup, install, verification, manifests, encryption, and runtime handling.
 - `packages/secureskills-cli`
-  CLI commands and Codex integration.
+  CLI commands and agent integrations.
 - `fixtures/`
   Test fixtures for skills and source repos.
 - `tests/`
@@ -169,7 +186,7 @@ PlaTo v1 is deliberately narrow:
 
 - trust root is local to the user or project
 - GitHub and local skill-source flows are supported
-- Codex is the first zero-extra-command integration target
+- Codex and Claude are supported zero-extra-command integration targets
 - other agents can still be launched through `secureskills run`
 
 Known deferred work:
@@ -177,7 +194,7 @@ Known deferred work:
 - stronger runtime hardening against same-user mutation of the unlocked skill view
 - publisher-signing and richer remote trust policies
 - tighter approval controls for first-time or untrusted remote sources
-- broader host integrations beyond Codex
+- broader host integrations beyond Codex and Claude
 
 One important boundary: if malicious code is already running with enough local privilege, it can still invoke the legitimate installer path and authorize a malicious skill through the local trust root. That is documented as a follow-up security problem, not a solved one in v1.
 

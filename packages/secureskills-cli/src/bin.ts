@@ -12,11 +12,14 @@ import {
 } from "../../secureskills-core/src/index.ts";
 import {
   discoverProjectRoot,
-  doctorCodex,
-  disableCodexForRepo,
-  enableCodexForRepo,
-  installCodexShellHook,
-  launchCodex,
+  doctorAgent,
+  disableAgentForRepo,
+  enableAgentForRepo,
+  formatAgentDisplayName,
+  installAgentShellHook,
+  isSupportedAgent,
+  launchAgent,
+  type SupportedAgent,
 } from "./codex-integration.ts";
 import { uninstallPlaTo } from "./uninstall.ts";
 
@@ -24,13 +27,21 @@ function printUsage(): void {
   console.log(`Usage:
   secureskills setup [--encrypt-by-default] [--root <path>]
   secureskills add <source> --skill <name> [--encrypt] [--root <path>]
-  secureskills enable codex [--root <path>]
-  secureskills disable codex [--root <path>]
-  secureskills doctor codex [--root <path>]
+  secureskills enable <codex|claude> [--root <path>]
+  secureskills disable <codex|claude> [--root <path>]
+  secureskills doctor <codex|claude> [--root <path>]
   secureskills uninstall
   secureskills verify [--root <path>]
   secureskills inspect <skill> [--root <path>]
   secureskills run [--root <path>] -- <command...>`);
+}
+
+function requireSupportedAgent(target: string | undefined): SupportedAgent {
+  if (!target || !isSupportedAgent(target)) {
+    throw new Error('Supported targets: "codex", "claude"');
+  }
+
+  return target;
 }
 
 function pullOption(argumentsList: string[], optionName: string): string | undefined {
@@ -121,43 +132,36 @@ async function main(): Promise<void> {
     }
 
     case "enable": {
-      const target = args.shift();
-      if (target !== "codex") {
-        throw new Error('Supported target: "codex"');
-      }
+      const target = requireSupportedAgent(args.shift());
+      const displayName = formatAgentDisplayName(target);
 
-      const result = await enableCodexForRepo(integrationRoot);
-      console.log(`enabled Codex integration for ${result.repoRoot}`);
+      const result = await enableAgentForRepo(target, integrationRoot);
+      console.log(`enabled ${displayName} integration for ${result.repoRoot}`);
       console.log(`shell hook: ${result.shellHookPath}`);
       console.log(`shell profile: ${result.shellProfilePath}`);
-      console.log(`real codex: ${result.realCodexPath}`);
+      console.log(`real ${target}: ${result.realBinaryPath}`);
       if (result.initializedProject) {
         console.log("initialized .secureskills for this repo");
       }
       if (result.shellHookUpdated) {
-        console.log("shell hook updated; open a new terminal or run 'exec zsh' once if Codex was not already intercepted in this shell");
+        console.log(`shell hook updated; open a new terminal or run 'exec zsh' once if ${displayName} was not already intercepted in this shell`);
       }
       return;
     }
 
     case "disable": {
-      const target = args.shift();
-      if (target !== "codex") {
-        throw new Error('Supported target: "codex"');
-      }
+      const target = requireSupportedAgent(args.shift());
+      const displayName = formatAgentDisplayName(target);
 
-      const result = await disableCodexForRepo(integrationRoot);
-      console.log(result.disabled ? `disabled Codex integration for ${result.repoRoot}` : `Codex integration was not enabled for ${result.repoRoot}`);
+      const result = await disableAgentForRepo(target, integrationRoot);
+      console.log(result.disabled ? `disabled ${displayName} integration for ${result.repoRoot}` : `${displayName} integration was not enabled for ${result.repoRoot}`);
       return;
     }
 
     case "doctor": {
-      const target = args.shift();
-      if (target !== "codex") {
-        throw new Error('Supported target: "codex"');
-      }
+      const target = requireSupportedAgent(args.shift());
 
-      const report = await doctorCodex(integrationRoot);
+      const report = await doctorAgent(target, integrationRoot);
       console.log(`repo enabled: ${report.repoEnabled ? "yes" : "no"}`);
       if (report.repoRoot) {
         console.log(`repo root: ${report.repoRoot}`);
@@ -165,7 +169,7 @@ async function main(): Promise<void> {
       console.log(`shell hook installed: ${report.shellHookInstalled ? "yes" : "no"}`);
       console.log(`shell profile configured: ${report.shellProfileConfigured ? "yes" : "no"}`);
       console.log(`shell profile: ${report.shellProfilePath}`);
-      console.log(`real codex path: ${report.realCodexPath ?? "(missing)"}`);
+      console.log(`real ${target} path: ${report.realBinaryPath ?? "(missing)"}`);
       process.exitCode = report.issues.length === 0 ? 0 : 1;
       for (const issue of report.issues) {
         console.error(`issue ${issue}`);
@@ -174,25 +178,46 @@ async function main(): Promise<void> {
     }
 
     case "launch": {
-      const target = args.shift();
-      if (target !== "codex") {
-        throw new Error('Supported target: "codex"');
-      }
+      const target = requireSupportedAgent(args.shift());
 
       const separatorIndex = args.indexOf("--");
       const commandArgs = separatorIndex === -1 ? args : args.slice(separatorIndex + 1);
-      const exitCode = await launchCodex(commandArgs, process.cwd());
+      const exitCode = await launchAgent(target, commandArgs, process.cwd());
       process.exitCode = exitCode;
       return;
     }
 
+    case "install-shell": {
+      const target = requireSupportedAgent(args.shift());
+      const displayName = formatAgentDisplayName(target);
+      const result = await installAgentShellHook(target);
+      console.log(`installed ${displayName} shell hook at ${result.shellHookPath}`);
+      console.log(`shell profile: ${result.shellProfilePath}`);
+      console.log(`real ${target}: ${result.realBinaryPath}`);
+      if (result.shellHookUpdated) {
+        console.log(`open a new terminal or run 'exec zsh' once to activate the ${displayName} shell hook`);
+      }
+      return;
+    }
+
     case "install-codex-shell": {
-      const result = await installCodexShellHook();
+      const result = await installAgentShellHook("codex");
       console.log(`installed Codex shell hook at ${result.shellHookPath}`);
       console.log(`shell profile: ${result.shellProfilePath}`);
-      console.log(`real codex: ${result.realCodexPath}`);
+      console.log(`real codex: ${result.realBinaryPath}`);
       if (result.shellHookUpdated) {
         console.log("open a new terminal or run 'exec zsh' once to activate the Codex shell hook");
+      }
+      return;
+    }
+
+    case "install-claude-shell": {
+      const result = await installAgentShellHook("claude");
+      console.log(`installed Claude shell hook at ${result.shellHookPath}`);
+      console.log(`shell profile: ${result.shellProfilePath}`);
+      console.log(`real claude: ${result.realBinaryPath}`);
+      if (result.shellHookUpdated) {
+        console.log("open a new terminal or run 'exec zsh' once to activate the Claude shell hook");
       }
       return;
     }
