@@ -131,6 +131,8 @@ claude
 
 Outside enabled repos, `codex` and `claude` behave normally.
 
+Claude support is implemented, but it has not been live-tested with a real subscribed Claude Code account on this machine. The feature is present, but real-world Claude behavior may still be buggy and may need follow-up fixes.
+
 The integration model is intentionally conservative:
 
 - no replacement of the real agent binaries
@@ -195,6 +197,7 @@ Known deferred work:
 - publisher-signing and richer remote trust policies
 - tighter approval controls for first-time or untrusted remote sources
 - broader host integrations beyond Codex and Claude
+- live validation of Claude integration with a real subscribed Claude Code environment; current coverage used a fake local `claude` binary, so the feature may still be buggy in real use
 
 One important boundary: if malicious code is already running with enough local privilege, it can still invoke the legitimate installer path and authorize a malicious skill through the local trust root. That is documented as a follow-up security problem, not a solved one in v1.
 
