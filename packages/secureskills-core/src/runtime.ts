@@ -10,7 +10,8 @@ import { ensureDir, pathExists, removeIfExists, symlinkAbsoluteTarget } from "./
 import { verifyProject } from "./verify.ts";
 import type { BundleManifest, VerifiedWorkspace } from "./types.ts";
 
-const ROOT_SYNC_EXCLUDES = new Set([".agents", ".git", ".secureskills", "skills"]);
+const SYNC_EXCLUDES = new Set([".agents", ".git", ".secureskills", "skills"]);
+const LIVE_MIRROR_INTERVAL_MS = 50;
 
 export async function createVerifiedWorkspace(projectRoot: string): Promise<VerifiedWorkspace> {
   const report = await verifyProject(projectRoot);
@@ -63,6 +64,7 @@ export async function runAgentCommand(
   try {
     await materializeLaunchPath(projectRoot, workspace.workspaceDir, options.launchFromDir);
     const launchCwd = resolveLaunchWorkingDirectory(projectRoot, workspace.workspaceDir, options.launchFromDir);
+    const liveMirror = startLiveWorkspaceMirror(workspace.workspaceDir, projectRoot);
     const exitCode = await new Promise<number>((resolve, reject) => {
       const child = spawn(command[0], command.slice(1), {
         cwd: launchCwd,
@@ -82,6 +84,7 @@ export async function runAgentCommand(
       });
     });
 
+    await liveMirror.stop();
     await syncWorkspaceEdits(workspace.workspaceDir, projectRoot);
     return exitCode;
   } finally {
@@ -104,31 +107,18 @@ async function materializeLaunchPath(projectRoot: string, workspaceDir: string, 
   }
 
   const components = relativePath.split(path.sep).filter(Boolean);
-  let sourceDir = projectRoot;
-  let targetDir = workspaceDir;
+  let currentWorkspaceDir = workspaceDir;
 
   for (let index = 0; index < components.length; index += 1) {
     const component = components[index];
-    sourceDir = path.join(sourceDir, component);
-    targetDir = path.join(targetDir, component);
+    const nextWorkspaceDir = path.join(currentWorkspaceDir, component);
+    const sourceDir = path.join(projectRoot, ...components.slice(0, index + 1));
 
-    await removeIfExists(targetDir);
-    await ensureDir(targetDir);
-
-    const entries = await readdir(sourceDir, { withFileTypes: true });
-    entries.sort((left, right) => left.name.localeCompare(right.name));
-
-    const nextComponent = components[index + 1];
-    for (const entry of entries) {
-      const sourcePath = path.join(sourceDir, entry.name);
-      const targetPath = path.join(targetDir, entry.name);
-
-      if (entry.name === nextComponent && entry.isDirectory()) {
-        continue;
-      }
-
-      await symlinkAbsoluteTarget(sourcePath, targetPath);
-    }
+    await removeIfExists(nextWorkspaceDir);
+    await ensureDir(nextWorkspaceDir);
+    await linkWorkspaceEntries(sourceDir, nextWorkspaceDir);
+    await prepareAgentMounts(sourceDir, nextWorkspaceDir, path.join(workspaceDir, ".secureskills", "runtime", "skills"));
+    currentWorkspaceDir = nextWorkspaceDir;
   }
 }
 
@@ -230,26 +220,59 @@ async function materializeBundle(
 }
 
 async function syncWorkspaceEdits(workspaceDir: string, projectRoot: string): Promise<void> {
-  await syncWorkspaceDirectory(workspaceDir, projectRoot, projectRoot, true);
+  await syncWorkspaceDirectory(workspaceDir, projectRoot, projectRoot);
+}
+
+function startLiveWorkspaceMirror(workspaceDir: string, projectRoot: string): {
+  stop: () => Promise<void>;
+} {
+  let syncInFlight: Promise<void> | null = null;
+
+  async function flush(): Promise<void> {
+    if (syncInFlight) {
+      return syncInFlight;
+    }
+
+    syncInFlight = syncWorkspaceEdits(workspaceDir, projectRoot)
+      .catch(() => {
+        // Best-effort during the live session. The final exit sync remains authoritative.
+      })
+      .finally(() => {
+        syncInFlight = null;
+      });
+
+    return syncInFlight;
+  }
+
+  const intervalId = setInterval(() => {
+    void flush();
+  }, LIVE_MIRROR_INTERVAL_MS);
+
+  return {
+    stop: async () => {
+      clearInterval(intervalId);
+      if (syncInFlight) {
+        await syncInFlight;
+      }
+    },
+  };
 }
 
 async function syncWorkspaceDirectory(
   workspaceDir: string,
   projectDir: string,
   projectRoot: string,
-  isRoot: boolean,
 ): Promise<void> {
   const workspaceEntries = await readdir(workspaceDir, { withFileTypes: true });
   const projectEntries = await readdir(projectDir, { withFileTypes: true });
-  const excludedNames = isRoot ? ROOT_SYNC_EXCLUDES : null;
   const workspaceEntriesByName = new Map(
     workspaceEntries
-      .filter((entry) => !excludedNames?.has(entry.name))
+      .filter((entry) => !SYNC_EXCLUDES.has(entry.name))
       .map((entry) => [entry.name, entry]),
   );
 
   for (const workspaceEntry of workspaceEntries) {
-    if (excludedNames?.has(workspaceEntry.name)) {
+    if (SYNC_EXCLUDES.has(workspaceEntry.name)) {
       continue;
     }
 
@@ -261,7 +284,7 @@ async function syncWorkspaceDirectory(
   }
 
   for (const projectEntry of projectEntries) {
-    if (excludedNames?.has(projectEntry.name)) {
+    if (SYNC_EXCLUDES.has(projectEntry.name)) {
       continue;
     }
 
@@ -304,7 +327,7 @@ async function syncWorkspaceEntry(
     }
 
     await ensureDir(projectPath);
-    await syncWorkspaceDirectory(workspacePath, projectPath, projectRoot, false);
+    await syncWorkspaceDirectory(workspacePath, projectPath, projectRoot);
     return;
   }
 
