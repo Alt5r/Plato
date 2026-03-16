@@ -2,7 +2,7 @@
 
 ## Hardening Roadmap
 
-### Patch Set 1
+### Shipped
 
 - hard-fail on unexpected workspace symlinks during runtime mirroring
 - validate mirror destinations before copy, mkdir, or delete operations
@@ -10,12 +10,9 @@
 - write key files with `0600`
 - validate skill names before any path joins
 - add regression coverage for the above
-
-### Patch Set 2
-
-- resolve and store git commit SHAs for installed sources
+- resolve and store git commit SHAs for installed git sources
 - surface pinned source revisions in the manifest, lockfile, and `inspect`
-- move the installer away from tracking `main` by default
+- add installer channel and version selection with local install metadata
 
 ### Patch Set 3
 

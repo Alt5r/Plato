@@ -138,6 +138,14 @@ Supported values:
 - `experimental`
 - exact version tags such as `v0.1.0`
 
+Channel mapping:
+
+- `stable` -> current tagged release
+- `latest` -> current `main`
+- `experimental` -> current `experimental` branch
+
 PlaTo records the requested target, resolved ref, and resolved commit SHA in the local install metadata file:
 
 - `~/.local/share/plato/.plato-install.json`
+
+For security boundaries and reporting guidance, see [SECURITY.md](./SECURITY.md) and [docs/threat-model.md](./docs/threat-model.md).

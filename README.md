@@ -16,6 +16,12 @@ curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh
 curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh | bash -s -- v0.1.0
 ```
 
+Channel meaning:
+
+- `stable` -> current tagged release
+- `latest` -> current `main`
+- `experimental` -> current `experimental` branch
+
 The CLI command is `secureskills`.
 
 ## Why This Matters
@@ -103,6 +109,8 @@ When you run an agent through PlaTo, or use Codex or Claude in a repo that has b
 - Normal project edits still write back to the real project; the secure workspace is only there to control what skills are visible.
 
 This is a local-first model. In v1, trust is owned by the user or project, not by a remote publisher PKI.
+
+For the full security boundary, see [docs/threat-model.md](./docs/threat-model.md). For reporting vulnerabilities, see [SECURITY.md](./SECURITY.md).
 
 ## Commands
 
