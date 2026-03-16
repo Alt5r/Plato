@@ -13,6 +13,8 @@ export interface LockfileEntry {
   skillName: string;
   sourceType: "local" | "git";
   sourceRef: string;
+  resolvedSourceRef: string | null;
+  sourceCommitSha: string | null;
   installedAt: string;
   manifestSha256: string;
   encrypted: boolean;
@@ -46,6 +48,8 @@ export interface BundleManifest {
   source: {
     type: "local" | "git";
     ref: string;
+    resolvedRef: string | null;
+    commitSha: string | null;
   };
   installedAt: string;
   signatureAlgorithm: "ed25519";
@@ -98,6 +102,8 @@ export interface AddSkillResult {
   encrypted: boolean;
   sourceType: "local" | "git";
   sourceRef: string;
+  resolvedSourceRef: string | null;
+  sourceCommitSha: string | null;
   destination: string;
   manifestSha256: string;
   initializedProject: boolean;

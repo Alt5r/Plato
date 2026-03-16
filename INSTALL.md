@@ -120,3 +120,24 @@ If you installed to a custom directory:
 ```bash
 PLATO_INSTALL_DIR="$HOME/tools/plato" secureskills uninstall
 ```
+## Install Targets
+
+The installer accepts an optional first argument:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh | bash -s -- latest
+curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh | bash -s -- experimental
+curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh | bash -s -- v0.1.0
+```
+
+Supported values:
+
+- `stable` (default)
+- `latest`
+- `experimental`
+- exact version tags such as `v0.1.0`
+
+PlaTo records the requested target, resolved ref, and resolved commit SHA in the local install metadata file:
+
+- `~/.local/share/plato/.plato-install.json`

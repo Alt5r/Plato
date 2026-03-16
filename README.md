@@ -8,6 +8,14 @@ PlaTo lets you install Markdown-based agent skills from GitHub with the same sim
 curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh | bash
 ```
 
+Install channels and explicit versions are also supported:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh | bash -s -- latest
+curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh | bash -s -- experimental
+curl -fsSL https://raw.githubusercontent.com/Alt5r/Plato/main/scripts/install.sh | bash -s -- v0.1.0
+```
+
 The CLI command is `secureskills`.
 
 ## Why This Matters
@@ -74,6 +82,8 @@ secureskills add anthropics/skills --skill skill-creator
 ```
 
 The difference is what happens after install: PlaTo secures the bundle locally and only exposes it again after verification.
+
+For git-based skill installs, PlaTo now also records the resolved source commit SHA in the secured manifest and lockfile so installs are tied to a concrete upstream revision.
 
 ## How It Works
 

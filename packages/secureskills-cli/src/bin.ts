@@ -106,6 +106,9 @@ async function main(): Promise<void> {
       console.log(
         `installed ${result.skillName} from ${result.sourceType}:${result.sourceRef} (${result.encrypted ? "encrypted" : "plaintext"})`,
       );
+      if (result.sourceCommitSha) {
+        console.log(`source commit: ${result.sourceCommitSha}`);
+      }
       return;
     }
 
@@ -238,6 +241,9 @@ async function main(): Promise<void> {
       console.log(`skill: ${result.skillName}`);
       console.log(`verified: ${result.verified ? "yes" : "no"}`);
       console.log(`source: ${result.manifest.source.type}:${result.manifest.source.ref}`);
+      if (result.manifest.source.commitSha) {
+        console.log(`source commit: ${result.manifest.source.commitSha}`);
+      }
       console.log(`installed: ${result.manifest.installedAt}`);
       console.log(`encrypted: ${result.manifest.encryption.enabled ? "yes" : "no"}`);
       console.log(`files: ${result.manifest.files.length}`);

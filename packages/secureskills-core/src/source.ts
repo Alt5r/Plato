@@ -9,6 +9,8 @@ import { pathExists } from "./fs-utils.ts";
 interface ResolvedSource {
   type: "local" | "git";
   ref: string;
+  resolvedRef: string | null;
+  commitSha: string | null;
   directory: string;
   cleanup: () => Promise<void>;
 }
@@ -63,12 +65,42 @@ async function runGitClone(sourceRef: string, targetDir: string): Promise<void> 
   });
 }
 
+async function runGitCommand(args: string[], workdir: string): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawn("git", args, {
+      cwd: workdir,
+      stdio: "pipe",
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+        return;
+      }
+
+      reject(new Error(stderr.trim() || `git ${args.join(" ")} failed`));
+    });
+  });
+}
+
 export async function resolveSource(rootDir: string, sourceRef: string): Promise<ResolvedSource> {
   const localPath = path.resolve(rootDir, sourceRef);
   if (await pathExists(localPath) && (await stat(localPath)).isDirectory()) {
     return {
       type: "local",
       ref: sourceRef,
+      resolvedRef: null,
+      commitSha: null,
       directory: localPath,
       cleanup: async () => {},
     };
@@ -80,9 +112,12 @@ export async function resolveSource(rootDir: string, sourceRef: string): Promise
 
   const tempDir = await mkdtemp(path.join(tmpdir(), "secureskills-source-"));
   await runGitClone(sourceRef, tempDir);
+  const commitSha = await runGitCommand(["rev-parse", "HEAD"], tempDir);
   return {
     type: "git",
     ref: sourceRef,
+    resolvedRef: commitSha,
+    commitSha,
     directory: tempDir,
     cleanup: async () => {
       await rm(tempDir, { recursive: true, force: true });

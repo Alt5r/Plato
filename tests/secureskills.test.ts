@@ -87,11 +87,19 @@ test("add can pull a skill through the git clone path", async () => {
 
     const result = await addSkill(projectDir, `file://${sourceRepoDir}`, "find-skills");
     const inspection = await inspectSkill(projectDir, "find-skills");
+    const expectedCommit = spawnSync("git", ["rev-parse", "HEAD"], {
+      cwd: sourceRepoDir,
+      encoding: "utf8",
+    }).stdout.trim();
 
     assert.equal(result.sourceType, "git");
     assert.equal(result.initializedProject, true);
     assert.equal(inspection.manifest.source.type, "git");
     assert.equal(inspection.manifest.source.ref, `file://${sourceRepoDir}`);
+    assert.equal(result.sourceCommitSha, expectedCommit);
+    assert.equal(result.resolvedSourceRef, expectedCommit);
+    assert.equal(inspection.manifest.source.commitSha, expectedCommit);
+    assert.equal(inspection.manifest.source.resolvedRef, expectedCommit);
   } finally {
     await rm(projectDir, { recursive: true, force: true });
     await rm(sourceRepoDir, { recursive: true, force: true });
@@ -636,6 +644,100 @@ printf '%s\\n' "$*" > "${logPath}"
     await rm(installDir, { recursive: true, force: true });
     await rm(fakeBinDir, { recursive: true, force: true });
     await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("install.sh resolves stable through release channels and records install metadata", async () => {
+  const installDir = await mkdtemp(path.join(tmpdir(), "plato-install-script-dir-"));
+  const fakeRepoDir = await mkdtemp(path.join(tmpdir(), "plato-install-script-repo-"));
+  const fakeBinDir = await mkdtemp(path.join(tmpdir(), "plato-install-script-bin-"));
+  const fakeNpmPath = path.join(fakeBinDir, "npm");
+  const scriptPath = path.join(repoRoot, "scripts", "install.sh");
+
+  try {
+    runGit(["init", "-b", "main"], fakeRepoDir);
+    runGit(["config", "user.name", "PlaTo Test"], fakeRepoDir);
+    runGit(["config", "user.email", "test@example.com"], fakeRepoDir);
+    await writeFile(path.join(fakeRepoDir, "package.json"), '{\"name\":\"secureskills\"}\n', "utf8");
+    await writeFile(path.join(fakeRepoDir, "release-channels.json"), JSON.stringify({
+      stable: "v1.2.3",
+      latest: "main",
+      experimental: "experimental",
+    }, null, 2), "utf8");
+    await mkdir(path.join(fakeRepoDir, "bin"), { recursive: true });
+    await writeFile(path.join(fakeRepoDir, "bin", "secureskills.js"), "#!/usr/bin/env node\nprocess.exit(0)\n", "utf8");
+    runGit(["add", "."], fakeRepoDir);
+    runGit(["commit", "-m", "initial"], fakeRepoDir);
+    runGit(["tag", "v1.2.3"], fakeRepoDir);
+
+    await writeFile(
+      fakeNpmPath,
+      "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n",
+      "utf8",
+    );
+    await chmod(fakeNpmPath, 0o755);
+
+    const result = spawnSync(
+      "bash",
+      [scriptPath, "stable"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+          PLATO_REPO_URL: fakeRepoDir,
+          PLATO_INSTALL_DIR: installDir,
+          PLATO_DEFAULT_AGENT: "skip",
+        },
+      },
+    );
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const metadata = JSON.parse(await readFile(path.join(installDir, ".plato-install.json"), "utf8")) as {
+      requestedTarget: string;
+      resolvedRef: string;
+      commitSha: string;
+    };
+    const installedCommit = spawnSync("git", ["rev-parse", "HEAD"], {
+      cwd: installDir,
+      encoding: "utf8",
+    }).stdout.trim();
+
+    assert.equal(metadata.requestedTarget, "stable");
+    assert.equal(metadata.resolvedRef, "v1.2.3");
+    assert.equal(metadata.commitSha, installedCommit);
+    assert.match(result.stdout, /installed PlaTo stable -> v1\.2\.3/);
+  } finally {
+    await rm(installDir, { recursive: true, force: true });
+    await rm(fakeRepoDir, { recursive: true, force: true });
+    await rm(fakeBinDir, { recursive: true, force: true });
+  }
+});
+
+test("install.sh rejects invalid install targets", async () => {
+  const installDir = await mkdtemp(path.join(tmpdir(), "plato-install-invalid-dir-"));
+  const scriptPath = path.join(repoRoot, "scripts", "install.sh");
+
+  try {
+    const result = spawnSync(
+      "bash",
+      [scriptPath, "not-a-channel"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PLATO_INSTALL_DIR: installDir,
+          PLATO_DEFAULT_AGENT: "skip",
+        },
+      },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Invalid install target/);
+  } finally {
+    await rm(installDir, { recursive: true, force: true });
   }
 });
 
