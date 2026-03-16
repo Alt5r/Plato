@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, copyFile, lstat, mkdtemp, readdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdtemp, readdir, readFile, readlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -263,6 +263,7 @@ async function syncWorkspaceDirectory(
   projectDir: string,
   projectRoot: string,
 ): Promise<void> {
+  assertMirrorPathWithinProject(projectDir, projectRoot);
   const workspaceEntries = await readdir(workspaceDir, { withFileTypes: true });
   const projectEntries = await readdir(projectDir, { withFileTypes: true });
   const workspaceEntriesByName = new Map(
@@ -289,7 +290,9 @@ async function syncWorkspaceDirectory(
     }
 
     if (!workspaceEntriesByName.has(projectEntry.name)) {
-      await removeIfExists(path.join(projectDir, projectEntry.name));
+      const missingProjectPath = path.join(projectDir, projectEntry.name);
+      assertMirrorPathWithinProject(missingProjectPath, projectRoot);
+      await removeIfExists(missingProjectPath);
     }
   }
 }
@@ -299,6 +302,7 @@ async function syncWorkspaceEntry(
   projectPath: string,
   projectRoot: string,
 ): Promise<void> {
+  assertMirrorPathWithinProject(projectPath, projectRoot);
   const workspaceStats = await lstat(workspacePath);
 
   if (workspaceStats.isSymbolicLink()) {
@@ -309,15 +313,9 @@ async function syncWorkspaceEntry(
       return;
     }
 
-    if (isWithinProjectRoot(resolvedTarget, projectRoot)) {
-      await clonePath(resolvedTarget, projectPath);
-      return;
-    }
-
-    await removeIfExists(projectPath);
-    await ensureDir(path.dirname(projectPath));
-    await symlink(linkTarget, projectPath);
-    return;
+    throw new Error(
+      `Refusing to mirror workspace symlink ${workspacePath} into project path ${projectPath}`,
+    );
   }
 
   if (workspaceStats.isDirectory()) {
@@ -342,43 +340,20 @@ async function syncWorkspaceEntry(
   throw new Error(`Unsupported workspace entry type while syncing edits: ${workspacePath}`);
 }
 
-async function clonePath(sourcePath: string, destinationPath: string): Promise<void> {
-  const sourceStats = await lstat(sourcePath);
-
-  if (sourceStats.isSymbolicLink()) {
-    const linkTarget = await readlink(sourcePath);
-    await removeIfExists(destinationPath);
-    await ensureDir(path.dirname(destinationPath));
-    await symlink(linkTarget, destinationPath);
-    return;
-  }
-
-  if (sourceStats.isDirectory()) {
-    await removeIfExists(destinationPath);
-    await ensureDir(destinationPath);
-    const entries = await readdir(sourcePath, { withFileTypes: true });
-    for (const entry of entries) {
-      await clonePath(path.join(sourcePath, entry.name), path.join(destinationPath, entry.name));
-    }
-    return;
-  }
-
-  if (sourceStats.isFile()) {
-    await removeIfExists(destinationPath);
-    await ensureDir(path.dirname(destinationPath));
-    await copyFile(sourcePath, destinationPath);
-    await chmod(destinationPath, sourceStats.mode & 0o777);
-    return;
-  }
-
-  throw new Error(`Unsupported source entry type while cloning path: ${sourcePath}`);
-}
-
 async function lstatOrNull(targetPath: string) {
   try {
     return await lstat(targetPath);
   } catch {
     return null;
+  }
+}
+
+function assertMirrorPathWithinProject(candidatePath: string, projectRoot: string): void {
+  const resolvedCandidate = path.resolve(candidatePath);
+  const resolvedProjectRoot = path.resolve(projectRoot);
+
+  if (!isWithinProjectRoot(resolvedCandidate, resolvedProjectRoot)) {
+    throw new Error(`Refusing to mirror outside project root: ${candidatePath}`);
   }
 }
 

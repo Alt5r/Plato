@@ -1,5 +1,33 @@
 # TODO
 
+## Hardening Roadmap
+
+### Patch Set 1
+
+- hard-fail on unexpected workspace symlinks during runtime mirroring
+- validate mirror destinations before copy, mkdir, or delete operations
+- create `.secureskills/keys` with `0700`
+- write key files with `0600`
+- validate skill names before any path joins
+- add regression coverage for the above
+
+### Patch Set 2
+
+- resolve and store git commit SHAs for installed sources
+- surface pinned source revisions in the manifest, lockfile, and `inspect`
+- move the installer away from tracking `main` by default
+
+### Patch Set 3
+
+- add `LICENSE`
+- add `SECURITY.md`
+- document the v1 threat model and non-goals explicitly
+
+### Patch Set 4
+
+- replace or redesign the current live mirror loop with a safer write-through or evented model
+- reduce the shell-hook surface outside explicitly enabled repos
+
 ## Installer Authority
 
 SecureSkills v1 treats the local project key as the trust root. That means a malicious script or other RCE already running with enough local privilege could invoke the normal installer flow itself, for example by running:

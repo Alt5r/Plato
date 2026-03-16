@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -45,6 +45,7 @@ export async function setupProject(rootDir: string, options: SetupOptions = {}):
   await ensureDir(paths.keysDir);
   await ensureDir(paths.storeDir);
   await ensureDir(paths.runtimeDir);
+  await chmod(paths.keysDir, 0o700);
 
   const keyPair = generateSigningKeyPair();
   const masterKey = generateMasterKey();
@@ -68,9 +69,9 @@ export async function setupProject(rootDir: string, options: SetupOptions = {}):
 
   await writeJsonFile(paths.configPath, config);
   await writeJsonFile(paths.lockPath, lockfile);
-  await writeFile(paths.signingPrivateKeyPath, keyPair.privateKeyPem, "utf8");
-  await writeFile(paths.signingPublicKeyPath, keyPair.publicKeyPem, "utf8");
-  await writeFile(paths.masterKeyPath, masterKey.toString("base64"), "utf8");
+  await writeFile(paths.signingPrivateKeyPath, keyPair.privateKeyPem, { encoding: "utf8", mode: 0o600 });
+  await writeFile(paths.signingPublicKeyPath, keyPair.publicKeyPem, { encoding: "utf8", mode: 0o600 });
+  await writeFile(paths.masterKeyPath, masterKey.toString("base64"), { encoding: "utf8", mode: 0o600 });
 
   return {
     rootDir,

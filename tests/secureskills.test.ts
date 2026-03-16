@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -98,6 +98,20 @@ test("add can pull a skill through the git clone path", async () => {
   }
 });
 
+test("add rejects invalid skill names before initializing the project", async () => {
+  const projectDir = await createTempProject();
+
+  try {
+    await assert.rejects(
+      addSkill(projectDir, fixtureSource, "../rogue"),
+      /Invalid skill name/,
+    );
+    await assert.rejects(stat(path.join(projectDir, ".secureskills")));
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
 test("tampering with a stored plaintext payload fails verification", async () => {
   const projectDir = await createTempProject();
 
@@ -139,6 +153,32 @@ test("encrypted installs stay opaque on disk and still verify", async () => {
   }
 });
 
+test("setupProject writes key material with restricted permissions", async (context) => {
+  if (process.platform === "win32") {
+    context.skip("POSIX permission modes are not stable on Windows");
+    return;
+  }
+
+  const projectDir = await createTempProject();
+
+  try {
+    await setupProject(projectDir);
+
+    const keysDirPath = path.join(projectDir, ".secureskills", "keys");
+    const keysDirStats = await stat(keysDirPath);
+    const privateKeyStats = await stat(path.join(keysDirPath, "signing.private.pem"));
+    const publicKeyStats = await stat(path.join(keysDirPath, "signing.public.pem"));
+    const masterKeyStats = await stat(path.join(keysDirPath, "master.key"));
+
+    assert.equal(keysDirStats.mode & 0o777, 0o700);
+    assert.equal(privateKeyStats.mode & 0o777, 0o600);
+    assert.equal(publicKeyStats.mode & 0o777, 0o600);
+    assert.equal(masterKeyStats.mode & 0o777, 0o600);
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
 test("verified workspace exposes only authorized skills and cleans up", async () => {
   const projectDir = await createTempProject();
 
@@ -173,6 +213,35 @@ test("verified workspace exposes only authorized skills and cleans up", async ()
     const workspacePath = workspace.workspaceDir;
     await workspace.cleanup();
     await assert.rejects(stat(workspacePath));
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("runAgentCommand refuses to mirror unexpected workspace symlinks into the project", async () => {
+  const projectDir = await createTempProject();
+  const launchDir = path.join(projectDir, "src");
+  const mirroredSymlink = path.join(launchDir, "escape-link");
+
+  try {
+    await mkdir(launchDir, { recursive: true });
+    await setupProject(projectDir);
+    await addSkill(projectDir, fixtureSource, "find-skills");
+
+    await assert.rejects(
+      runAgentCommand(
+        projectDir,
+        [
+          "node",
+          "-e",
+          "require('node:fs').symlinkSync('/tmp', 'escape-link')",
+        ],
+        { launchFromDir: launchDir },
+      ),
+      /Refusing to mirror workspace symlink/,
+    );
+
+    await assert.rejects(lstat(mirroredSymlink));
   } finally {
     await rm(projectDir, { recursive: true, force: true });
   }

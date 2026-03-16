@@ -15,6 +15,7 @@ export async function addSkill(
   skillName: string,
   options: AddSkillOptions = {},
 ): Promise<AddSkillResult> {
+  validateSkillName(skillName);
   const { project, initializedProject } = await ensureProject(projectRoot);
   const resolvedSource = await resolveSource(projectRoot, sourceRef);
   const stageDirectory = path.join(project.paths.storeDir, `.stage-${skillName}-${randomUUID()}`);
@@ -129,4 +130,26 @@ async function replaceExistingBundle(destinationDirectory: string, stageDirector
   }
 
   return (await pathExists(backupDirectory)) ? backupDirectory : null;
+}
+
+function validateSkillName(skillName: string): void {
+  if (skillName.length === 0) {
+    throw new Error("Skill name cannot be empty");
+  }
+
+  if (path.isAbsolute(skillName)) {
+    throw new Error(`Invalid skill name "${skillName}": absolute paths are not allowed`);
+  }
+
+  if (skillName.includes("..")) {
+    throw new Error(`Invalid skill name "${skillName}": dot segments are not allowed`);
+  }
+
+  if (skillName.includes("/") || skillName.includes("\\")) {
+    throw new Error(`Invalid skill name "${skillName}": path separators are not allowed`);
+  }
+
+  if (!/^[A-Za-z0-9._-]+$/.test(skillName)) {
+    throw new Error(`Invalid skill name "${skillName}": only letters, numbers, dot, underscore, and dash are allowed`);
+  }
 }
