@@ -60,9 +60,7 @@ export async function listFilesRecursive(rootDir: string): Promise<string[]> {
 }
 
 export async function removeIfExists(targetPath: string): Promise<void> {
-  if (await pathExists(targetPath)) {
-    await rm(targetPath, { recursive: true, force: true });
-  }
+  await rm(targetPath, { recursive: true, force: true });
 }
 
 export async function writeTextFile(targetPath: string, contents: string): Promise<void> {

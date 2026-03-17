@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { chmod, copyFile, lstat, mkdtemp, readdir, readFile, readlink, writeFile } from "node:fs/promises";
+import { watch } from "node:fs";
+import { chmod, copyFile, lstat, mkdtemp, readdir, readFile, readlink, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -11,7 +12,7 @@ import { verifyProject } from "./verify.ts";
 import type { BundleManifest, VerifiedWorkspace } from "./types.ts";
 
 const SYNC_EXCLUDES = new Set([".agents", ".git", ".secureskills", "skills"]);
-const LIVE_MIRROR_INTERVAL_MS = 50;
+const RECONCILER_FALLBACK_INTERVAL_MS = 250;
 
 export async function createVerifiedWorkspace(projectRoot: string): Promise<VerifiedWorkspace> {
   const report = await verifyProject(projectRoot);
@@ -51,6 +52,11 @@ interface RunAgentOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+interface WorkspaceReconciler {
+  refreshCoverage: () => Promise<void>;
+  stop: () => Promise<void>;
+}
+
 export async function runAgentCommand(
   projectRoot: string,
   command: string[],
@@ -64,7 +70,9 @@ export async function runAgentCommand(
   try {
     await materializeLaunchPath(projectRoot, workspace.workspaceDir, options.launchFromDir);
     const launchCwd = resolveLaunchWorkingDirectory(projectRoot, workspace.workspaceDir, options.launchFromDir);
-    const liveMirror = startLiveWorkspaceMirror(workspace.workspaceDir, projectRoot);
+    const liveMirror = startWorkspaceReconciler(workspace.workspaceDir, projectRoot);
+    await liveMirror.refreshCoverage();
+    await syncWorkspaceEdits(workspace.workspaceDir, projectRoot);
     const exitCode = await new Promise<number>((resolve, reject) => {
       const child = spawn(command[0], command.slice(1), {
         cwd: launchCwd,
@@ -223,39 +231,165 @@ async function syncWorkspaceEdits(workspaceDir: string, projectRoot: string): Pr
   await syncWorkspaceDirectory(workspaceDir, projectRoot, projectRoot);
 }
 
-function startLiveWorkspaceMirror(workspaceDir: string, projectRoot: string): {
-  stop: () => Promise<void>;
-} {
-  let syncInFlight: Promise<void> | null = null;
+function startWorkspaceReconciler(workspaceDir: string, projectRoot: string): WorkspaceReconciler {
+  const watchers = new Map<string, ReturnType<typeof watch>>();
+  const pendingPaths = new Set<string>();
+  let watcherClosed = false;
+  let flushScheduled = false;
+  let flushInFlight: Promise<void> | null = null;
 
-  async function flush(): Promise<void> {
-    if (syncInFlight) {
-      return syncInFlight;
+  function queuePath(targetPath: string): void {
+    if (watcherClosed) {
+      return;
     }
 
-    syncInFlight = syncWorkspaceEdits(workspaceDir, projectRoot)
-      .catch(() => {
-        // Best-effort during the live session. The final exit sync remains authoritative.
-      })
-      .finally(() => {
-        syncInFlight = null;
-      });
-
-    return syncInFlight;
+    pendingPaths.add(targetPath);
+    scheduleFlush();
   }
 
-  const intervalId = setInterval(() => {
-    void flush();
-  }, LIVE_MIRROR_INTERVAL_MS);
+  function scheduleFlush(): void {
+    if (flushScheduled || watcherClosed) {
+      return;
+    }
+
+    flushScheduled = true;
+    queueMicrotask(() => {
+      flushScheduled = false;
+      void flushPendingPaths();
+    });
+  }
+
+  async function flushPendingPaths(): Promise<void> {
+    if (flushInFlight) {
+      return flushInFlight;
+    }
+
+    const nextBatch = [...pendingPaths];
+    if (nextBatch.length === 0) {
+      return;
+    }
+    pendingPaths.clear();
+
+    flushInFlight = (async () => {
+      try {
+        for (const candidatePath of nextBatch) {
+          await reconcileWorkspacePath(candidatePath, workspaceDir, projectRoot);
+        }
+      } catch {
+        // Best-effort during the live session. The final exit sync remains authoritative.
+      } finally {
+        flushInFlight = null;
+        if (pendingPaths.size > 0 && !watcherClosed) {
+          scheduleFlush();
+        }
+      }
+    })();
+
+    return flushInFlight;
+  }
+
+  function startWatching(directoryPath: string): void {
+    if (watchers.has(directoryPath) || watcherClosed) {
+      return;
+    }
+
+    const watcher = watch(directoryPath, { persistent: false }, async (_eventType, filename) => {
+      const changedPath = filename ? path.join(directoryPath, filename.toString()) : directoryPath;
+      queuePath(changedPath);
+
+      try {
+        const stats = await lstat(changedPath);
+        if (stats.isDirectory()) {
+          await ensureWatcherCoverage(changedPath);
+        }
+      } catch {
+        // The path may have been deleted before we could inspect it.
+      }
+    });
+
+    watcher.on("error", () => {
+      queuePath(directoryPath);
+    });
+    watchers.set(directoryPath, watcher);
+  }
+
+  async function ensureWatcherCoverage(directoryPath: string): Promise<void> {
+    const relativeDirectory = path.relative(workspaceDir, directoryPath);
+    if (relativeDirectory.startsWith("..") || path.isAbsolute(relativeDirectory)) {
+      return;
+    }
+
+    const normalizedRelativeDirectory = relativeDirectory === "" ? "" : path.normalize(relativeDirectory);
+    const rootComponent = normalizedRelativeDirectory.split(path.sep)[0] ?? "";
+    if (rootComponent && SYNC_EXCLUDES.has(rootComponent)) {
+      return;
+    }
+
+    startWatching(directoryPath);
+
+    const entries = await readdir(directoryPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || SYNC_EXCLUDES.has(entry.name)) {
+        continue;
+      }
+
+      await ensureWatcherCoverage(path.join(directoryPath, entry.name));
+    }
+  }
+
+  void ensureWatcherCoverage(workspaceDir).catch(() => {
+    queuePath(workspaceDir);
+  });
+  const fallbackIntervalId = setInterval(() => {
+    queuePath(workspaceDir);
+  }, RECONCILER_FALLBACK_INTERVAL_MS);
 
   return {
+    refreshCoverage: async () => {
+      await ensureWatcherCoverage(workspaceDir);
+    },
     stop: async () => {
-      clearInterval(intervalId);
-      if (syncInFlight) {
-        await syncInFlight;
+      watcherClosed = true;
+      clearInterval(fallbackIntervalId);
+      for (const watcher of watchers.values()) {
+        watcher.close();
+      }
+      watchers.clear();
+      await flushPendingPaths();
+      if (flushInFlight) {
+        await flushInFlight;
       }
     },
   };
+}
+
+async function reconcileWorkspacePath(candidateWorkspacePath: string, workspaceDir: string, projectRoot: string): Promise<void> {
+  const relativePath = path.relative(workspaceDir, candidateWorkspacePath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return;
+  }
+
+  const normalizedRelativePath = relativePath === "" ? "" : path.normalize(relativePath);
+  const rootComponent = normalizedRelativePath.split(path.sep)[0] ?? "";
+  if (rootComponent && SYNC_EXCLUDES.has(rootComponent)) {
+    return;
+  }
+
+  if (normalizedRelativePath === "") {
+    await syncWorkspaceEdits(workspaceDir, projectRoot);
+    return;
+  }
+
+  const projectPath = path.join(projectRoot, normalizedRelativePath);
+  assertMirrorPathWithinProject(projectPath, projectRoot);
+
+  const workspaceStats = await lstatOrNull(candidateWorkspacePath);
+  if (!workspaceStats) {
+    await removeIfExists(projectPath);
+    return;
+  }
+
+  await syncWorkspaceEntry(candidateWorkspacePath, projectPath, projectRoot);
 }
 
 async function syncWorkspaceDirectory(
@@ -313,6 +447,21 @@ async function syncWorkspaceEntry(
       return;
     }
 
+    if (isWithinProjectRoot(resolvedTarget, projectRoot)) {
+      const workspaceRoot = resolveWorkspaceRootFromPair(workspacePath, projectPath, projectRoot);
+      const sourceWorkspacePath = path.join(workspaceRoot, path.relative(projectRoot, resolvedTarget));
+
+      if (await pathExists(sourceWorkspacePath)) {
+        await cloneProjectContent(resolvedTarget, projectPath);
+      } else {
+        await moveProjectContent(resolvedTarget, projectPath);
+      }
+
+      await removeIfExists(workspacePath);
+      await symlinkAbsoluteTarget(projectPath, workspacePath);
+      return;
+    }
+
     throw new Error(
       `Refusing to mirror workspace symlink ${workspacePath} into project path ${projectPath}`,
     );
@@ -330,10 +479,8 @@ async function syncWorkspaceEntry(
   }
 
   if (workspaceStats.isFile()) {
-    await removeIfExists(projectPath);
     await ensureDir(path.dirname(projectPath));
-    await copyFile(workspacePath, projectPath);
-    await chmod(projectPath, workspaceStats.mode & 0o777);
+    await copyFileAtomically(workspacePath, projectPath, workspaceStats.mode & 0o777);
     return;
   }
 
@@ -364,4 +511,67 @@ function isWithinProjectRoot(candidatePath: string, projectRoot: string): boolea
 
   const relativePath = path.relative(projectRoot, candidatePath);
   return relativePath !== "" && !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+}
+
+async function copyFileAtomically(sourcePath: string, destinationPath: string, mode: number): Promise<void> {
+  const tempDestinationPath = `${destinationPath}.plato-tmp-${process.pid}`;
+  await removeIfExists(tempDestinationPath);
+  await copyFile(sourcePath, tempDestinationPath);
+  await chmod(tempDestinationPath, mode);
+  await rename(tempDestinationPath, destinationPath);
+}
+
+async function cloneProjectContent(sourcePath: string, destinationPath: string): Promise<void> {
+  const sourceStats = await lstat(sourcePath);
+
+  if (sourceStats.isSymbolicLink()) {
+    throw new Error(`Refusing to clone nested project symlink during reconciliation: ${sourcePath}`);
+  }
+
+  if (sourceStats.isDirectory()) {
+    await removeIfExists(destinationPath);
+    await ensureDir(destinationPath);
+    const entries = await readdir(sourcePath, { withFileTypes: true });
+    for (const entry of entries) {
+      await cloneProjectContent(path.join(sourcePath, entry.name), path.join(destinationPath, entry.name));
+    }
+    return;
+  }
+
+  if (sourceStats.isFile()) {
+    await ensureDir(path.dirname(destinationPath));
+    await copyFileAtomically(sourcePath, destinationPath, sourceStats.mode & 0o777);
+    return;
+  }
+
+  throw new Error(`Unsupported project entry type while cloning reconciled content: ${sourcePath}`);
+}
+
+async function moveProjectContent(sourcePath: string, destinationPath: string): Promise<void> {
+  if (!(await pathExists(sourcePath))) {
+    if (await pathExists(destinationPath)) {
+      return;
+    }
+    throw new Error(`Refusing to move missing project content during reconciliation: ${sourcePath}`);
+  }
+
+  await ensureDir(path.dirname(destinationPath));
+  await removeIfExists(destinationPath);
+
+  try {
+    await rename(sourcePath, destinationPath);
+  } catch {
+    await cloneProjectContent(sourcePath, destinationPath);
+    await removeIfExists(sourcePath);
+  }
+}
+
+function resolveWorkspaceRootFromPair(workspacePath: string, projectPath: string, projectRoot: string): string {
+  const relativeProjectPath = path.relative(projectRoot, projectPath);
+  if (relativeProjectPath === "") {
+    return workspacePath;
+  }
+
+  const depth = relativeProjectPath.split(path.sep).filter(Boolean).length;
+  return path.resolve(workspacePath, ...Array.from({ length: depth }, () => ".."));
 }
