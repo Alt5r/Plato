@@ -48,6 +48,8 @@ This provides:
 
 - pre-launch verification of installed secured bundles
 - exclusion of loose local skills from the managed runtime view
+- read-only unlocked runtime skill trees during execution
+- post-launch mutation detection with session termination on detected drift
 
 This does not create a full isolation boundary. The agent still runs with the user's normal account permissions.
 
@@ -63,5 +65,6 @@ Current follow-up hardening areas include:
 
 - stronger first-time source approval controls
 - repository or owner allowlists
-- safer runtime synchronization and reduced writable materialization
-- reduced shell-hook surface outside explicitly enabled repos
+- stronger isolation from unlocked runtime skill material
+- reduced or eliminated writable plaintext materialization
+- live validation of Claude integration with a real subscribed environment

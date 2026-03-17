@@ -696,6 +696,84 @@ done
   }
 });
 
+test("runtime skill files are read-only during a session", async (context) => {
+  if (process.platform === "win32") {
+    context.skip("POSIX runtime permission semantics are not stable on Windows");
+    return;
+  }
+
+  const projectDir = await createTempProject();
+  const launchDir = path.join(projectDir, "src");
+  const fakeAgentPath = path.join(projectDir, "readonly-agent.sh");
+  const outputDir = await mkdtemp(path.join(tmpdir(), "secureskills-readonly-output-"));
+  const runtimeOutputPath = path.join(outputDir, "readonly-output.txt");
+
+  try {
+    await mkdir(launchDir, { recursive: true });
+    await setupProject(projectDir);
+    await addSkill(projectDir, fixtureSource, "find-skills");
+    await writeFile(
+      fakeAgentPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+node -e "const fs = require('node:fs'); try { fs.appendFileSync(process.argv[1], 'tampered\\\\n'); fs.writeFileSync(process.argv[2], 'unexpected-write-success\\\\n'); process.exit(0); } catch (error) { fs.writeFileSync(process.argv[2], String(error.code || error.message) + '\\\\n'); process.exit(error.code === 'EACCES' ? 7 : 9); }" "$SECURESKILLS_RUNTIME_DIR/find-skills/SKILL.md" "$1"
+`,
+      "utf8",
+    );
+    await chmod(fakeAgentPath, 0o755);
+
+    const exitCode = await runAgentCommand(projectDir, [fakeAgentPath, runtimeOutputPath], {
+      launchFromDir: launchDir,
+    });
+    const output = await readFile(runtimeOutputPath, "utf8");
+
+    assert.equal(exitCode, 7);
+    assert.match(output, /EACCES/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("runtime skill files cannot be deleted without relaxing directory permissions", async (context) => {
+  if (process.platform === "win32") {
+    context.skip("POSIX runtime permission semantics are not stable on Windows");
+    return;
+  }
+
+  const projectDir = await createTempProject();
+  const launchDir = path.join(projectDir, "src");
+  const fakeAgentPath = path.join(projectDir, "readonly-delete-agent.sh");
+  const outputDir = await mkdtemp(path.join(tmpdir(), "secureskills-readonly-delete-output-"));
+  const runtimeOutputPath = path.join(outputDir, "readonly-delete-output.txt");
+
+  try {
+    await mkdir(launchDir, { recursive: true });
+    await setupProject(projectDir);
+    await addSkill(projectDir, fixtureSource, "find-skills");
+    await writeFile(
+      fakeAgentPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+node -e "const fs = require('node:fs'); try { fs.unlinkSync(process.argv[1]); fs.writeFileSync(process.argv[2], 'unexpected-delete-success\\\\n'); process.exit(0); } catch (error) { fs.writeFileSync(process.argv[2], String(error.code || error.message) + '\\\\n'); process.exit(error.code === 'EACCES' ? 8 : 10); }" "$SECURESKILLS_RUNTIME_DIR/find-skills/SKILL.md" "$1"
+`,
+      "utf8",
+    );
+    await chmod(fakeAgentPath, 0o755);
+
+    const exitCode = await runAgentCommand(projectDir, [fakeAgentPath, runtimeOutputPath], {
+      launchFromDir: launchDir,
+    });
+    const output = await readFile(runtimeOutputPath, "utf8");
+
+    assert.equal(exitCode, 8);
+    assert.match(output, /EACCES/);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
 test("runtime mutation detection terminates a session when a runtime skill file is modified", async () => {
   const projectDir = await createTempProject();
   const launchDir = path.join(projectDir, "src");
@@ -709,6 +787,7 @@ test("runtime mutation detection terminates a session when a runtime skill file 
       fakeAgentPath,
       `#!/usr/bin/env bash
 set -euo pipefail
+chmod u+w "$SECURESKILLS_RUNTIME_DIR/find-skills/SKILL.md"
 printf 'tampered\\n' >> "$SECURESKILLS_RUNTIME_DIR/find-skills/SKILL.md"
 sleep 5
 `,
@@ -739,6 +818,7 @@ test("runtime mutation detection terminates a session when a runtime skill file 
       fakeAgentPath,
       `#!/usr/bin/env bash
 set -euo pipefail
+chmod u+w "$SECURESKILLS_RUNTIME_DIR/find-skills"
 rm "$SECURESKILLS_RUNTIME_DIR/find-skills/SKILL.md"
 sleep 5
 `,
@@ -769,6 +849,7 @@ test("runtime mutation detection terminates a session when a runtime skill file 
       fakeAgentPath,
       `#!/usr/bin/env bash
 set -euo pipefail
+chmod u+w "$SECURESKILLS_RUNTIME_DIR/find-skills"
 printf 'rogue\\n' > "$SECURESKILLS_RUNTIME_DIR/find-skills/extra.txt"
 sleep 5
 `,
@@ -799,6 +880,7 @@ test("runtime mutation detection terminates a session when a runtime skill symli
       fakeAgentPath,
       `#!/usr/bin/env bash
 set -euo pipefail
+chmod u+w "$SECURESKILLS_RUNTIME_DIR/find-skills"
 ln -s /tmp "$SECURESKILLS_RUNTIME_DIR/find-skills/escape-link"
 sleep 5
 `,

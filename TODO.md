@@ -13,17 +13,19 @@
 - resolve and store git commit SHAs for installed git sources
 - surface pinned source revisions in the manifest, lockfile, and `inspect`
 - add installer channel and version selection with local install metadata
-
-### Patch Set 3
-
 - add `LICENSE`
 - add `SECURITY.md`
 - document the v1 threat model and non-goals explicitly
-
-### Patch Set 4
-
 - replace or redesign the current live mirror loop with a safer write-through or evented model
 - reduce the shell-hook surface outside explicitly enabled repos
+- detect runtime skill mutations and terminate on drift
+- make the unlocked runtime skill tree read-only during sessions
+
+### Remaining Runtime Hardening
+
+- stronger isolation from unlocked runtime skill material
+- reduce or eliminate writable plaintext materialization
+- evaluate OS-enforced read-only mounts or agent-native loading
 
 ## Installer Authority
 
@@ -42,12 +44,14 @@ This needs later-stage mitigation. Candidate directions:
 - separate installer approval from normal runtime authority
 - stronger policy around non-interactive installs
 
-## Codex Runtime Hardening
+## Runtime Hardening
 
-The planned Codex shell integration will still rely on the current verified-workspace model in phase one. That means pre-launch verification is enforced, but same-user runtime injection into the unlocked skills view is not fully prevented once the agent process is running.
+PlaTo now verifies skills before launch, uses a safer reconciler during sessions, detects post-launch drift, and keeps the unlocked runtime skill tree read-only during execution.
 
-Track this as a second-phase enhancement area:
+What remains is stronger isolation rather than baseline integrity.
 
-- make the unlocked runtime view read-only where possible
-- detect post-launch mutations
+Track this as a later hardening area:
+
+- stronger isolation from unlocked runtime skill material
 - reduce or eliminate writable plaintext skill materialization
+- consider OS-enforced read-only mounting or agent-native loading

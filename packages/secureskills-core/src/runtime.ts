@@ -35,6 +35,7 @@ export async function createVerifiedWorkspace(projectRoot: string): Promise<Veri
   for (const bundle of report.bundles) {
     await materializeBundle(project, bundle.manifest!, runtimeSkillsDir);
   }
+  await setRuntimeTreePermissions(runtimeSkillsDir, 0o555, 0o444);
 
   await prepareAgentMounts(projectRoot, workspaceDir, runtimeSkillsDir);
 
@@ -42,6 +43,7 @@ export async function createVerifiedWorkspace(projectRoot: string): Promise<Veri
     workspaceDir,
     runtimeSkillsDir,
     cleanup: async () => {
+      await relaxRuntimeTreePermissions(runtimeSkillsDir);
       await removeIfExists(workspaceDir);
     },
   };
@@ -240,6 +242,33 @@ async function materializeBundle(
     await ensureDir(path.dirname(destinationPath));
     await writeFile(destinationPath, plaintext);
   }
+}
+
+async function setRuntimeTreePermissions(rootDir: string, directoryMode: number, fileMode: number): Promise<void> {
+  const entries = await readdir(rootDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(rootDir, entry.name);
+
+    if (entry.isDirectory()) {
+      await setRuntimeTreePermissions(entryPath, directoryMode, fileMode);
+      await chmod(entryPath, directoryMode);
+      continue;
+    }
+
+    if (entry.isFile()) {
+      await chmod(entryPath, fileMode);
+    }
+  }
+
+  await chmod(rootDir, directoryMode);
+}
+
+async function relaxRuntimeTreePermissions(rootDir: string): Promise<void> {
+  if (!(await pathExists(rootDir))) {
+    return;
+  }
+
+  await setRuntimeTreePermissions(rootDir, 0o755, 0o644);
 }
 
 async function syncWorkspaceEdits(workspaceDir: string, projectRoot: string): Promise<void> {
