@@ -1,5 +1,6 @@
 {
   "name": "secureskills",
+  "description": "Secure skills for coding agents with local authorization and verified runtime exposure.",
   "type": "module",
   "bin": {
     "secureskills": "./bin/secureskills.js"
