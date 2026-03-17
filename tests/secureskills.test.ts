@@ -696,6 +696,126 @@ done
   }
 });
 
+test("runtime mutation detection terminates a session when a runtime skill file is modified", async () => {
+  const projectDir = await createTempProject();
+  const launchDir = path.join(projectDir, "src");
+  const fakeAgentPath = path.join(projectDir, "mutating-agent.sh");
+
+  try {
+    await mkdir(launchDir, { recursive: true });
+    await setupProject(projectDir);
+    await addSkill(projectDir, fixtureSource, "find-skills");
+    await writeFile(
+      fakeAgentPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf 'tampered\\n' >> "$SECURESKILLS_RUNTIME_DIR/find-skills/SKILL.md"
+sleep 5
+`,
+      "utf8",
+    );
+    await chmod(fakeAgentPath, 0o755);
+
+    const exitCode = await runAgentCommand(projectDir, [fakeAgentPath], {
+      launchFromDir: launchDir,
+    });
+
+    assert.notEqual(exitCode, 0);
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("runtime mutation detection terminates a session when a runtime skill file is deleted", async () => {
+  const projectDir = await createTempProject();
+  const launchDir = path.join(projectDir, "src");
+  const fakeAgentPath = path.join(projectDir, "deleting-agent.sh");
+
+  try {
+    await mkdir(launchDir, { recursive: true });
+    await setupProject(projectDir);
+    await addSkill(projectDir, fixtureSource, "find-skills");
+    await writeFile(
+      fakeAgentPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+rm "$SECURESKILLS_RUNTIME_DIR/find-skills/SKILL.md"
+sleep 5
+`,
+      "utf8",
+    );
+    await chmod(fakeAgentPath, 0o755);
+
+    const exitCode = await runAgentCommand(projectDir, [fakeAgentPath], {
+      launchFromDir: launchDir,
+    });
+
+    assert.notEqual(exitCode, 0);
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("runtime mutation detection terminates a session when a runtime skill file is added", async () => {
+  const projectDir = await createTempProject();
+  const launchDir = path.join(projectDir, "src");
+  const fakeAgentPath = path.join(projectDir, "adding-agent.sh");
+
+  try {
+    await mkdir(launchDir, { recursive: true });
+    await setupProject(projectDir);
+    await addSkill(projectDir, fixtureSource, "find-skills");
+    await writeFile(
+      fakeAgentPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf 'rogue\\n' > "$SECURESKILLS_RUNTIME_DIR/find-skills/extra.txt"
+sleep 5
+`,
+      "utf8",
+    );
+    await chmod(fakeAgentPath, 0o755);
+
+    const exitCode = await runAgentCommand(projectDir, [fakeAgentPath], {
+      launchFromDir: launchDir,
+    });
+
+    assert.notEqual(exitCode, 0);
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("runtime mutation detection terminates a session when a runtime skill symlink is introduced", async () => {
+  const projectDir = await createTempProject();
+  const launchDir = path.join(projectDir, "src");
+  const fakeAgentPath = path.join(projectDir, "symlink-agent.sh");
+
+  try {
+    await mkdir(launchDir, { recursive: true });
+    await setupProject(projectDir);
+    await addSkill(projectDir, fixtureSource, "find-skills");
+    await writeFile(
+      fakeAgentPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+ln -s /tmp "$SECURESKILLS_RUNTIME_DIR/find-skills/escape-link"
+sleep 5
+`,
+      "utf8",
+    );
+    await chmod(fakeAgentPath, 0o755);
+
+    const exitCode = await runAgentCommand(projectDir, [fakeAgentPath], {
+      launchFromDir: launchDir,
+    });
+
+    assert.notEqual(exitCode, 0);
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
 test("uninstall removes the managed install directory and Codex shell integration after npm uninstall succeeds", async () => {
   const installDir = await mkdtemp(path.join(tmpdir(), "plato-install-dir-"));
   const fakeBinDir = await mkdtemp(path.join(tmpdir(), "plato-fake-bin-"));

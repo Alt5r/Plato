@@ -7,7 +7,7 @@ import path from "node:path";
 import { PAYLOAD_DIR } from "./constants.ts";
 import { loadProject } from "./config.ts";
 import { decryptBytes, unwrapContentKey } from "./crypto.ts";
-import { ensureDir, pathExists, removeIfExists, symlinkAbsoluteTarget } from "./fs-utils.ts";
+import { ensureDir, pathExists, removeIfExists, sha256Hex, symlinkAbsoluteTarget } from "./fs-utils.ts";
 import { verifyProject } from "./verify.ts";
 import type { BundleManifest, VerifiedWorkspace } from "./types.ts";
 
@@ -57,6 +57,18 @@ interface WorkspaceReconciler {
   stop: () => Promise<void>;
 }
 
+interface RuntimeMutationDetector {
+  bindChildProcess: (child: ReturnType<typeof spawn>) => void;
+  stop: () => Promise<void>;
+}
+
+interface RuntimeIntegritySnapshot {
+  directories: Set<string>;
+  files: Map<string, string>;
+}
+
+const MUTATION_DETECTOR_FALLBACK_INTERVAL_MS = 250;
+
 export async function runAgentCommand(
   projectRoot: string,
   command: string[],
@@ -73,6 +85,7 @@ export async function runAgentCommand(
     const liveMirror = startWorkspaceReconciler(workspace.workspaceDir, projectRoot);
     await liveMirror.refreshCoverage();
     await syncWorkspaceEdits(workspace.workspaceDir, projectRoot);
+    const mutationDetector = await startRuntimeMutationDetector(workspace.runtimeSkillsDir);
     const exitCode = await new Promise<number>((resolve, reject) => {
       const child = spawn(command[0], command.slice(1), {
         cwd: launchCwd,
@@ -85,9 +98,11 @@ export async function runAgentCommand(
           SECURESKILLS_ORIGINAL_CWD: options.launchFromDir ?? projectRoot,
         },
       });
+      mutationDetector.bindChildProcess(child);
 
       child.on("error", reject);
-      child.on("exit", (code) => {
+      child.on("exit", async (code) => {
+        await mutationDetector.stop();
         resolve(code ?? 1);
       });
     });
@@ -363,6 +378,114 @@ function startWorkspaceReconciler(workspaceDir: string, projectRoot: string): Wo
   };
 }
 
+async function startRuntimeMutationDetector(runtimeSkillsDir: string): Promise<RuntimeMutationDetector> {
+  const watchers = new Map<string, ReturnType<typeof watch>>();
+  let detectorClosed = false;
+  const expectedSnapshot = await buildRuntimeIntegritySnapshot(runtimeSkillsDir);
+  let reverifyInFlight: Promise<void> | null = null;
+  let child: ReturnType<typeof spawn> | null = null;
+  let violationMessage: string | null = null;
+
+  function ensureWatcher(directoryPath: string): void {
+    if (watchers.has(directoryPath) || detectorClosed) {
+      return;
+    }
+
+    const watcher = watch(directoryPath, { persistent: false }, async (_eventType, filename) => {
+      const changedPath = filename ? path.join(directoryPath, filename.toString()) : directoryPath;
+      await reverify(changedPath);
+    });
+
+    watcher.on("error", async () => {
+      await reverify(runtimeSkillsDir);
+    });
+    watchers.set(directoryPath, watcher);
+  }
+
+  async function ensureCoverage(directoryPath: string): Promise<void> {
+    ensureWatcher(directoryPath);
+    const entries = await readdir(directoryPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        await ensureCoverage(path.join(directoryPath, entry.name));
+      }
+    }
+  }
+
+  async function reverify(_changedPath: string): Promise<void> {
+    if (detectorClosed || (child && child.exitCode !== null)) {
+      return;
+    }
+
+    if (reverifyInFlight) {
+      return reverifyInFlight;
+    }
+
+    reverifyInFlight = (async () => {
+      try {
+        const actualSnapshot = await buildRuntimeIntegritySnapshot(runtimeSkillsDir);
+        const violation = diffRuntimeIntegrity(expectedSnapshot, actualSnapshot);
+        if (!violation) {
+          await ensureCoverage(runtimeSkillsDir);
+          return;
+        }
+
+        await handleViolation(`Plato runtime mutation detected: ${violation}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await handleViolation(`Plato runtime mutation detector failed: ${message}`);
+      } finally {
+        reverifyInFlight = null;
+      }
+    })();
+
+    return reverifyInFlight;
+  }
+
+  async function handleViolation(message: string): Promise<void> {
+    if (detectorClosed) {
+      return;
+    }
+
+    detectorClosed = true;
+    violationMessage = message;
+    for (const watcher of watchers.values()) {
+      watcher.close();
+    }
+    watchers.clear();
+    clearInterval(fallbackIntervalId);
+    process.stderr.write(`${message}\n`);
+    if (child && child.exitCode === null) {
+      child.kill("SIGTERM");
+    }
+  }
+
+  await ensureCoverage(runtimeSkillsDir);
+  const fallbackIntervalId = setInterval(() => {
+    void reverify(runtimeSkillsDir);
+  }, MUTATION_DETECTOR_FALLBACK_INTERVAL_MS);
+
+  return {
+    bindChildProcess: (nextChild) => {
+      child = nextChild;
+      if (violationMessage && child.exitCode === null) {
+        child.kill("SIGTERM");
+      }
+    },
+    stop: async () => {
+      detectorClosed = true;
+      clearInterval(fallbackIntervalId);
+      for (const watcher of watchers.values()) {
+        watcher.close();
+      }
+      watchers.clear();
+      if (reverifyInFlight) {
+        await reverifyInFlight;
+      }
+    },
+  };
+}
+
 async function reconcileWorkspacePath(candidateWorkspacePath: string, workspaceDir: string, projectRoot: string): Promise<void> {
   const relativePath = path.relative(workspaceDir, candidateWorkspacePath);
   if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
@@ -574,4 +697,71 @@ function resolveWorkspaceRootFromPair(workspacePath: string, projectPath: string
 
   const depth = relativeProjectPath.split(path.sep).filter(Boolean).length;
   return path.resolve(workspacePath, ...Array.from({ length: depth }, () => ".."));
+}
+
+async function buildRuntimeIntegritySnapshot(runtimeSkillsDir: string): Promise<RuntimeIntegritySnapshot> {
+  const snapshot: RuntimeIntegritySnapshot = {
+    directories: new Set<string>(),
+    files: new Map<string, string>(),
+  };
+
+  async function visit(directoryPath: string, relativeDirectory: string): Promise<void> {
+    snapshot.directories.add(relativeDirectory);
+    const entries = await readdir(directoryPath, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of entries) {
+      const absolutePath = path.join(directoryPath, entry.name);
+      const relativePath = relativeDirectory ? path.posix.join(relativeDirectory, entry.name) : entry.name;
+
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Unexpected symlink in runtime skill tree: ${relativePath}`);
+      }
+
+      if (entry.isDirectory()) {
+        await visit(absolutePath, relativePath);
+        continue;
+      }
+
+      if (entry.isFile()) {
+        const contents = await readFile(absolutePath);
+        snapshot.files.set(relativePath, sha256Hex(contents));
+      }
+    }
+  }
+
+  await visit(runtimeSkillsDir, "");
+  return snapshot;
+}
+
+function diffRuntimeIntegrity(expected: RuntimeIntegritySnapshot, actual: RuntimeIntegritySnapshot): string | null {
+  for (const expectedDirectory of expected.directories) {
+    if (!actual.directories.has(expectedDirectory)) {
+      return `runtime directory disappeared: ${expectedDirectory || "."}`;
+    }
+  }
+
+  for (const actualDirectory of actual.directories) {
+    if (!expected.directories.has(actualDirectory)) {
+      return `unexpected runtime directory appeared: ${actualDirectory || "."}`;
+    }
+  }
+
+  for (const [expectedFile, expectedDigest] of expected.files) {
+    const actualDigest = actual.files.get(expectedFile);
+    if (!actualDigest) {
+      return `runtime file disappeared: ${expectedFile}`;
+    }
+    if (actualDigest !== expectedDigest) {
+      return `runtime file changed: ${expectedFile}`;
+    }
+  }
+
+  for (const actualFile of actual.files.keys()) {
+    if (!expected.files.has(actualFile)) {
+      return `unexpected runtime file appeared: ${actualFile}`;
+    }
+  }
+
+  return null;
 }
