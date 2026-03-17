@@ -4,11 +4,10 @@ PlaTo is an early-stage project. If you believe you have found a security issue,
 
 ## Reporting
 
-Send reports to:
+Use GitHub's private vulnerability reporting for this repository if it is enabled.
 
-- `security@rowanwelsh.me`
-
-If email is not practical, open a private GitHub security advisory if repository settings allow it.
+If private reporting is unavailable, contact the maintainer directly through GitHub and avoid
+posting technical details in a public issue until the report has been acknowledged.
 
 ## What To Include
 
