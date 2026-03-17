@@ -13,6 +13,19 @@ import type { BundleManifest, VerifiedWorkspace } from "./types.ts";
 
 const SYNC_EXCLUDES = new Set([".agents", ".git", ".secureskills", "skills"]);
 const RECONCILER_FALLBACK_INTERVAL_MS = 250;
+const ALLOWED_PARENT_ENV_VARS = [
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "PATH",
+  "PWD",
+  "SHELL",
+  "TERM",
+  "TMPDIR",
+  "USER",
+] as const;
 
 export async function createVerifiedWorkspace(projectRoot: string): Promise<VerifiedWorkspace> {
   const report = await verifyProject(projectRoot);
@@ -92,13 +105,7 @@ export async function runAgentCommand(
       const child = spawn(command[0], command.slice(1), {
         cwd: launchCwd,
         stdio: "inherit",
-        env: {
-          ...process.env,
-          ...options.env,
-          SECURESKILLS_RUNTIME_DIR: workspace.runtimeSkillsDir,
-          SECURESKILLS_WORKSPACE_DIR: workspace.workspaceDir,
-          SECURESKILLS_ORIGINAL_CWD: options.launchFromDir ?? projectRoot,
-        },
+        env: buildAgentEnvironment(projectRoot, workspace, options),
       });
       mutationDetector.bindChildProcess(child);
 
@@ -405,6 +412,28 @@ function startWorkspaceReconciler(workspaceDir: string, projectRoot: string): Wo
       }
     },
   };
+}
+
+function buildAgentEnvironment(
+  projectRoot: string,
+  workspace: VerifiedWorkspace,
+  options: RunAgentOptions,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+
+  for (const variableName of ALLOWED_PARENT_ENV_VARS) {
+    const value = process.env[variableName];
+    if (value !== undefined) {
+      environment[variableName] = value;
+    }
+  }
+
+  Object.assign(environment, options.env ?? {});
+  environment.SECURESKILLS_RUNTIME_DIR = workspace.runtimeSkillsDir;
+  environment.SECURESKILLS_WORKSPACE_DIR = workspace.workspaceDir;
+  environment.SECURESKILLS_ORIGINAL_CWD = options.launchFromDir ?? projectRoot;
+
+  return environment;
 }
 
 async function startRuntimeMutationDetector(runtimeSkillsDir: string): Promise<RuntimeMutationDetector> {

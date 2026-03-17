@@ -226,6 +226,93 @@ test("verified workspace exposes only authorized skills and cleans up", async ()
   }
 });
 
+test("runAgentCommand does not expose arbitrary parent secrets to the wrapped process", async () => {
+  const projectDir = await createTempProject();
+  const secretValue = "plato-secret-test-value";
+
+  try {
+    await setupProject(projectDir);
+    await addSkill(projectDir, fixtureSource, "find-skills");
+
+    const exitCode = await runAgentCommand(
+      projectDir,
+      [
+        "node",
+        "-e",
+        "process.exit(process.env.PLATO_SECRET_TEST ? 9 : 0);",
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+        },
+      },
+    );
+
+    assert.equal(exitCode, 0);
+    assert.equal(process.env.PLATO_SECRET_TEST, undefined);
+    process.env.PLATO_SECRET_TEST = secretValue;
+    const secondExitCode = await runAgentCommand(
+      projectDir,
+      [
+        "node",
+        "-e",
+        "process.exit(process.env.PLATO_SECRET_TEST ? 9 : 0);",
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+        },
+      },
+    );
+    assert.equal(secondExitCode, 0);
+  } finally {
+    delete process.env.PLATO_SECRET_TEST;
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("runAgentCommand preserves allowed environment variables and runtime context", async () => {
+  const projectDir = await createTempProject();
+  const outputDir = await mkdtemp(path.join(tmpdir(), "secureskills-env-output-"));
+  const outputPath = path.join(outputDir, "env-output.txt");
+
+  try {
+    await setupProject(projectDir);
+    await addSkill(projectDir, fixtureSource, "find-skills");
+
+    const exitCode = await runAgentCommand(
+      projectDir,
+      [
+        "node",
+        "-e",
+        "const fs=require('node:fs'); const payload = JSON.stringify({ path: Boolean(process.env.PATH), runtime: Boolean(process.env.SECURESKILLS_RUNTIME_DIR), workspace: Boolean(process.env.SECURESKILLS_WORKSPACE_DIR), originalCwd: process.env.SECURESKILLS_ORIGINAL_CWD }); fs.writeFileSync(process.argv[1], payload);",
+        outputPath,
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+        },
+      },
+    );
+
+    const payload = JSON.parse(await readFile(outputPath, "utf8")) as {
+      path: boolean;
+      runtime: boolean;
+      workspace: boolean;
+      originalCwd: string;
+    };
+
+    assert.equal(exitCode, 0);
+    assert.equal(payload.path, true);
+    assert.equal(payload.runtime, true);
+    assert.equal(payload.workspace, true);
+    assert.equal(payload.originalCwd, projectDir);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
 test("runAgentCommand refuses to mirror unexpected workspace symlinks into the project", async () => {
   const projectDir = await createTempProject();
   const launchDir = path.join(projectDir, "src");

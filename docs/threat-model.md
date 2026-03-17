@@ -48,6 +48,7 @@ This provides:
 
 - pre-launch verification of installed secured bundles
 - exclusion of loose local skills from the managed runtime view
+- narrowed launch environments for wrapped agent sessions
 - read-only unlocked runtime skill trees during execution
 - post-launch mutation detection with session termination on detected drift
 

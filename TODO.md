@@ -23,6 +23,7 @@
 
 ### Remaining Runtime Hardening
 
+- narrow the wrapped agent launch environment to an explicit allowlist
 - stronger isolation from unlocked runtime skill material
 - reduce or eliminate writable plaintext materialization
 - evaluate OS-enforced read-only mounts or agent-native loading
@@ -48,10 +49,4 @@ This needs later-stage mitigation. Candidate directions:
 
 PlaTo now verifies skills before launch, uses a safer reconciler during sessions, detects post-launch drift, and keeps the unlocked runtime skill tree read-only during execution.
 
-What remains is stronger isolation rather than baseline integrity.
-
-Track this as a later hardening area:
-
-- stronger isolation from unlocked runtime skill material
-- reduce or eliminate writable plaintext skill materialization
-- consider OS-enforced read-only mounting or agent-native loading
+The remaining runtime work is listed above under `Remaining Runtime Hardening`.
